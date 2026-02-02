@@ -7,14 +7,13 @@
 
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
-h1,h2,h3{margin:0 0 8px}
+h1,h2{margin:0 0 12px}
 small{color:#aaa}
 .hidden{display:none}
 .page{padding:16px}
 .panel{background:#181818;border:1px solid #303030;border-radius:12px;padding:12px;margin-bottom:12px}
 .row{display:flex;gap:12px;align-items:center}
 .col{flex:1}
-video{width:100%;background:#000;border-radius:12px}
 button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:pointer}
 .btn-red{background:#cc0000;color:#fff}
 .btn-blue{background:#065fd4;color:#fff}
@@ -22,9 +21,19 @@ button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:po
 input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
 .avatar{width:40px;height:40px;border-radius:50%;object-fit:cover}
 
-.topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#181818;border-bottom:1px solid #303030;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
+.topbar{
+  position:fixed;top:0;left:0;right:0;height:56px;
+  background:#181818;border-bottom:1px solid #303030;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 16px;z-index:100
+}
 .content{padding-top:72px}
-.profile-card{position:absolute;top:56px;right:16px;width:260px;background:#181818;border:1px solid #303030;border-radius:12px;padding:12px}
+
+.profile-card{
+  position:absolute;top:56px;right:16px;width:260px;
+  background:#181818;border:1px solid #303030;
+  border-radius:12px;padding:12px
+}
 </style>
 </head>
 
@@ -68,10 +77,10 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 </div>
 
 <script type="module">
-// ===== Firebase =====
+/* ===== Firebase ===== */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
@@ -86,7 +95,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// ===== 管理者設定 =====
+/* ===== 管理者 ===== */
 const ADMIN_EMAILS = [
   "kito.0420jp@gmail.com",
   "masato.0420jp@gmail.com"
@@ -96,9 +105,10 @@ let isAdmin = false;
 let myName = "";
 let myAvatar = "";
 
-// ===== ログイン =====
+/* ===== ログイン ===== */
 const provider = new GoogleAuthProvider();
-window.login = async function(){
+
+window.login = async () => {
   const res = await signInWithPopup(auth, provider);
   const user = res.user;
 
@@ -107,7 +117,7 @@ window.login = async function(){
 
   homeAvatar.src = myAvatar;
   previewAvatar.src = myAvatar;
-  profileName.innerText = myName;
+  profileName.textContent = myName;
 
   homeAvatar.classList.remove("hidden");
   loginBtn.classList.add("hidden");
@@ -118,16 +128,22 @@ window.login = async function(){
   }
 };
 
-// ===== プロフィール =====
-window.toggleProfile = function(){ profileCard.classList.toggle("hidden"); };
+/* ===== プロフィール ===== */
+window.toggleProfile = () => {
+  profileCard.classList.toggle("hidden");
+};
 
-// ===== 配信一覧（全員共有） =====
-onSnapshot(collection(db, "liveStreams"), snap => {
+/* ===== 配信一覧（全員共有） ===== */
+const q = query(collection(db, "liveStreams"), orderBy("createdAt", "desc"));
+
+onSnapshot(q, snap => {
   streamList.innerHTML = "";
+
   if (snap.empty) {
     streamList.innerHTML = "<small>現在配信中のライブはありません</small>";
     return;
   }
+
   snap.forEach(doc => {
     const s = doc.data();
     streamList.innerHTML += `
@@ -138,16 +154,26 @@ onSnapshot(collection(db, "liveStreams"), snap => {
           <small>配信者：${s.ownerName}</small>
         </div>
         <button class="btn-gray">視聴</button>
-      </div>`;
+      </div>
+    `;
   });
 });
 
-// ===== 管理者：ライブ作成 =====
-window.openAdmin = function(){ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); };
-window.backHome = function(){ location.reload(); };
+/* ===== 管理者操作 ===== */
+window.openAdmin = () => {
+  home.classList.add("hidden");
+  adminSetup.classList.remove("hidden");
+};
 
-window.startLive = async function(){
-  if (!isAdmin) return alert("管理者のみ可能です");
+window.backHome = () => {
+  location.reload();
+};
+
+window.startLive = async () => {
+  if (!isAdmin) {
+    alert("管理者のみ可能です");
+    return;
+  }
 
   await addDoc(collection(db, "liveStreams"), {
     title: streamTitle.value || "無題の配信",
@@ -156,7 +182,7 @@ window.startLive = async function(){
     createdAt: Date.now()
   });
 
-  alert("ライブ開始しました！");
+  alert("🎉 ライブ開始しました！");
   backHome();
 };
 </script>
