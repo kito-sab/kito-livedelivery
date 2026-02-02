@@ -20,24 +20,11 @@ button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:po
 .btn-blue{background:#065fd4;color:#fff}
 .btn-gray{background:#303030;color:#fff}
 input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
-.comment{border-bottom:1px solid #303030;padding:6px 0;font-size:14px}
-.badge-live{background:#ff0000;color:#fff;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:700}
 .avatar{width:40px;height:40px;border-radius:50%;object-fit:cover}
 
-.topbar{
-  position:fixed;top:0;left:0;right:0;height:56px;
-  background:#181818;border-bottom:1px solid #303030;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 16px;z-index:100
-}
+.topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#181818;border-bottom:1px solid #303030;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .content{padding-top:72px}
-
-.profile-card{
-  position:absolute;top:56px;right:16px;width:260px;
-  background:#181818;border:1px solid #303030;
-  border-radius:12px;padding:12px;
-  box-shadow:0 8px 24px rgba(0,0,0,.6)
-}
+.profile-card{position:absolute;top:56px;right:16px;width:260px;background:#181818;border:1px solid #303030;border-radius:12px;padding:12px}
 </style>
 </head>
 
@@ -45,7 +32,10 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 
 <div class="topbar">
   <strong>📺 Mini Live</strong>
-  <img id="homeAvatar" class="avatar" src="https://placehold.co/40x40" onclick="toggleProfile()">
+  <div>
+    <button id="loginBtn" class="btn-blue" onclick="login()">Googleログイン</button>
+    <img id="homeAvatar" class="avatar hidden" onclick="toggleProfile()">
+  </div>
 </div>
 
 <div class="content">
@@ -53,193 +43,122 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 <div id="profileCard" class="profile-card hidden">
   <div style="text-align:center">
     <img id="previewAvatar" class="avatar" style="width:64px;height:64px"><br><br>
-    <input type="file" accept="image/*" onchange="changeAvatar(event)">
-    <input id="profileName" placeholder="表示名">
-    <button class="btn-blue" onclick="saveProfile()">保存</button>
+    <strong id="profileName"></strong>
   </div>
 </div>
 
 <div id="home" class="page">
   <h1>配信一覧</h1>
   <div id="streamList"></div>
-  <button class="btn-gray" onclick="openAdmin()">管理者ページ</button>
+
+  <div id="adminOnly" class="hidden">
+    <button class="btn-red" onclick="openAdmin()">管理者：ライブ作成</button>
+  </div>
 </div>
 
 <div id="adminSetup" class="page hidden">
   <button class="btn-gray" onclick="backHome()">← 戻る</button>
-  <h2>🎬 配信作成</h2>
+  <h2>🎬 ライブ作成</h2>
   <div class="panel">
     <input id="streamTitle" placeholder="配信タイトル">
     <button class="btn-red" onclick="startLive()">🔴 ライブ開始</button>
   </div>
 </div>
 
-<div id="liveAdmin" class="page hidden">
-  <div class="panel">
-    <span class="badge-live">LIVE</span>
-    <video id="localVideo" autoplay muted></video>
-  </div>
-
-  <div class="panel">
-    <h3>🎥 配信 / 画面共有</h3>
-    <label><input type="checkbox" id="withAudio" checked> 画面音声を含める</label><br><br>
-    <button class="btn-red" onclick="shareScreen()">画面共有開始</button>
-  </div>
-
-  <div class="panel">
-    <h3>💬 コメント管理</h3>
-    <div id="adminComments"></div>
-  </div>
 </div>
 
-<div id="viewer" class="page hidden">
-  <button class="btn-gray" onclick="backHome()">← 戻る</button>
-  <div class="panel">
-    <span class="badge-live">LIVE</span>
-    <video id="remoteVideo" autoplay playsinline></video>
-  </div>
+<script type="module">
+// ===== Firebase =====
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-  <div class="panel">
-    <h3>💬 コメント</h3>
-    <div id="viewerComments"></div>
-    <input id="commentInput" placeholder="コメントを書く">
-    <button class="btn-blue" onclick="sendComment()">送信</button>
-  </div>
-</div>
+const firebaseConfig = {
+  apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
+  authDomain: "k1t0-live-video.firebaseapp.com",
+  projectId: "k1t0-live-video",
+  storageBucket: "k1t0-live-video.firebasestorage.app",
+  messagingSenderId: "588013681766",
+  appId: "1:588013681766:web:e108b7328a7a13948dc1a7"
+};
 
-</div>
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-<script>
-// ===== プロフィール =====
-let myName = localStorage.getItem("name") || "名無し";
-let myAvatar = localStorage.getItem("avatar") || "https://placehold.co/40x40";
-homeAvatar.src = myAvatar;
-previewAvatar.src = myAvatar;
-profileName.value = myName;
+// ===== 管理者設定 =====
+const ADMIN_EMAILS = [
+  "kito.0420jp@gmail.com",
+  "masato.0420jp@gmail.com"
+];
 
-function toggleProfile(){ profileCard.classList.toggle("hidden"); }
-function changeAvatar(e){
-  const f=e.target.files[0]; if(!f) return;
-  const r=new FileReader();
-  r.onload=()=>previewAvatar.src=r.result;
-  r.readAsDataURL(f);
-}
-function saveProfile(){
-  myName = profileName.value || "名無し";
-  myAvatar = previewAvatar.src;
-  localStorage.setItem("name",myName);
-  localStorage.setItem("avatar",myAvatar);
-  homeAvatar.src = myAvatar;
-  profileCard.classList.add("hidden");
-}
-
-// ===== 配信一覧 =====
-function renderStreams(){
-  const list = streamList;
-  list.innerHTML = "";
-  const s = JSON.parse(localStorage.getItem("liveStream"));
-  if(!s){ list.innerHTML="<small>現在配信中なし</small>"; return; }
-  list.innerHTML = `
-    <div class="panel row">
-      <img src="${s.avatar}" class="avatar">
-      <div class="col">
-        <strong>${s.title}</strong><br>
-        <small>配信者：${s.owner}</small>
-      </div>
-      <button class="btn-red" onclick="joinViewer()">参加</button>
-    </div>`;
-}
-renderStreams();
-
-function openAdmin(){ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); }
-function backHome(){ location.reload(); }
-
-function startLive(){
-  localStorage.setItem("liveStream", JSON.stringify({
-    title: streamTitle.value || "無題",
-    owner: myName,
-    avatar: myAvatar
-  }));
-  adminSetup.classList.add("hidden");
-  liveAdmin.classList.remove("hidden");
-  renderStreams();
-}
-
-function joinViewer(){
-  home.classList.add("hidden");
-  viewer.classList.remove("hidden");
-  initViewerRTC();
-}
-
-// ===== コメント =====
-const bc = new BroadcastChannel("mini-live");
-
-// ===== WebRTC =====
-let pc;
 let isAdmin = false;
+let myName = "";
+let myAvatar = "";
 
-async function shareScreen(){
-  isAdmin = true;
-  pc = createPC();
+// ===== ログイン =====
+const provider = new GoogleAuthProvider();
+window.login = async function(){
+  const res = await signInWithPopup(auth, provider);
+  const user = res.user;
 
-  const stream = await navigator.mediaDevices.getDisplayMedia({
-    video:true,
-    audio:withAudio.checked
-  });
-  localVideo.srcObject = stream;
-  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+  myName = user.displayName;
+  myAvatar = user.photoURL;
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  bc.postMessage({type:"offer",offer});
-}
+  homeAvatar.src = myAvatar;
+  previewAvatar.src = myAvatar;
+  profileName.innerText = myName;
 
-function initViewerRTC(){
-  pc = createPC();
-}
+  homeAvatar.classList.remove("hidden");
+  loginBtn.classList.add("hidden");
 
-function createPC(){
-  const pc = new RTCPeerConnection();
-  pc.onicecandidate = e=>{
-    if(e.candidate) bc.postMessage({type:"ice",ice:e.candidate});
-  };
-  pc.ontrack = e=>{
-    remoteVideo.srcObject = e.streams[0];
-  };
-  return pc;
-}
-
-bc.onmessage = async e=>{
-  const d=e.data;
-
-  if(d.type==="offer" && !isAdmin){
-    await pc.setRemoteDescription(d.offer);
-    const ans = await pc.createAnswer();
-    await pc.setLocalDescription(ans);
-    bc.postMessage({type:"answer",answer:ans});
-  }
-
-  if(d.type==="answer" && isAdmin){
-    await pc.setRemoteDescription(d.answer);
-  }
-
-  if(d.type==="ice"){
-    try{ await pc.addIceCandidate(d.ice); }catch{}
-  }
-
-  if(d.type==="comment"){
-    const h=`<div class="comment"><img src="${d.avatar}" class="avatar" style="width:24px;height:24px">
-    <strong>${d.name}</strong> ${d.text}</div>`;
-    adminComments.innerHTML+=h;
-    viewerComments.innerHTML+=h;
+  if (ADMIN_EMAILS.includes(user.email)) {
+    isAdmin = true;
+    adminOnly.classList.remove("hidden");
   }
 };
 
-function sendComment(){
-  if(!commentInput.value) return;
-  bc.postMessage({type:"comment",name:myName,avatar:myAvatar,text:commentInput.value});
-  commentInput.value="";
-}
+// ===== プロフィール =====
+window.toggleProfile = function(){ profileCard.classList.toggle("hidden"); };
+
+// ===== 配信一覧（全員共有） =====
+onSnapshot(collection(db, "liveStreams"), snap => {
+  streamList.innerHTML = "";
+  if (snap.empty) {
+    streamList.innerHTML = "<small>現在配信中のライブはありません</small>";
+    return;
+  }
+  snap.forEach(doc => {
+    const s = doc.data();
+    streamList.innerHTML += `
+      <div class="panel row">
+        <img src="${s.ownerIcon}" class="avatar">
+        <div class="col">
+          <strong>${s.title}</strong><br>
+          <small>配信者：${s.ownerName}</small>
+        </div>
+        <button class="btn-gray">視聴</button>
+      </div>`;
+  });
+});
+
+// ===== 管理者：ライブ作成 =====
+window.openAdmin = function(){ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); };
+window.backHome = function(){ location.reload(); };
+
+window.startLive = async function(){
+  if (!isAdmin) return alert("管理者のみ可能です");
+
+  await addDoc(collection(db, "liveStreams"), {
+    title: streamTitle.value || "無題の配信",
+    ownerName: myName,
+    ownerIcon: myAvatar,
+    createdAt: Date.now()
+  });
+
+  alert("ライブ開始しました！");
+  backHome();
+};
 </script>
 
 </body>
