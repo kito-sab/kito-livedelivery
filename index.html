@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mini Live Full</title>
+<title>Mini Live Full WebRTC</title>
 
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
@@ -166,7 +166,7 @@ onSnapshot(query(collection(db,"liveStreams"),orderBy("createdAt","desc")),snap=
           <small>${s.ownerName}</small>
         </div>
         <button class="btn-gray" onclick="joinStream('${d.id}')">入室</button>
-        ${ADMIN_EMAILS.includes(myName)?`<button class="btn-gray" onclick="deleteStream('${d.id}')">🗑</button>`:""}
+        ${ADMIN_EMAILS.includes(s.ownerName)?`<button class="btn-gray" onclick="deleteStream('${d.id}')">🗑</button>`:""}
       </div>`;
   });
 });
@@ -186,13 +186,9 @@ window.startLive=async()=>{
 };
 
 /* 配信削除 */
-window.deleteStream=async(id)=>{
-  if(confirm("削除しますか？")){
-    await deleteDoc(doc(db,"liveStreams",id));
-  }
-};
+window.deleteStream=async(id)=>{if(confirm("削除しますか？")) await deleteDoc(doc(db,"liveStreams",id));};
 
-/* WebRTC設定 */
+/* WebRTC */
 const rtcConfig={iceServers:[{urls:"stun:stun.l.google.com:19302"}]};
 
 /* 入室 */
@@ -200,9 +196,11 @@ window.joinStream=async(id)=>{
   currentStreamId=id;
   const roomRef = doc(db,"liveStreams",id);
 
-  onSnapshot(roomRef,snap=>{
-    const s=snap.data();
-    home.classList.add("hidden"); adminSetup.classList.add("hidden");
+  onSnapshot(roomRef, snap=>{
+    const s = snap.data();
+    home.classList.add("hidden");
+    adminSetup.classList.add("hidden");
+    if(!s) return;
     if(s.ownerUid===myUid){
       streamer.classList.remove("hidden");
       streamerTitle.textContent="🔴 配信中："+s.title;
@@ -214,17 +212,16 @@ window.joinStream=async(id)=>{
     }
   });
 
-  /* 視聴者数カウント */
+  // 視聴者数
   const viewersCol=collection(roomRef,"viewers");
-  const vRef=doc(viewersCol,myUid);
-  await setDoc(vRef,{joined:Date.now()});
+  await setDoc(doc(viewersCol,myUid),{joined:Date.now()});
   onSnapshot(viewersCol,snap=>{
     const n=snap.size;
     if(streamer.classList.contains("page")) viewerCount.textContent=n;
     if(viewer.classList.contains("page")) viewerCountViewer.textContent=n;
   });
 
-  /* コメント */
+  // コメント
   const commentsCol=collection(roomRef,"comments");
   onSnapshot(commentsCol, snap=>{
     commentList.innerHTML=""; commentListViewer.innerHTML="";
@@ -235,32 +232,41 @@ window.joinStream=async(id)=>{
     });
   });
 
-  /* WebRTC */
+  // WebRTC
   if(streamer.classList.contains("page")){
     // 配信者
-    const stream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+    const stream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
     streamVideo.srcObject=stream;
-    pc=new RTCPeerConnection(rtcConfig);
+    pc = new RTCPeerConnection(rtcConfig);
     stream.getTracks().forEach(t=>pc.addTrack(t,stream));
-    const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
     await updateDoc(roomRef,{offer});
-    pc.onicecandidate=e=>{if(e.candidate)addDoc(collection(roomRef,"ice"),e.candidate.toJSON());};
+
+    pc.onicecandidate = e=>{if(e.candidate)addDoc(collection(roomRef,"ice"),e.candidate.toJSON());};
     onSnapshot(collection(roomRef,"ice"),snap=>{
       snap.docChanges().forEach(c=>{if(c.type==="added")pc.addIceCandidate(c.doc.data());});
     });
   }else{
     // 視聴者
-    pc=new RTCPeerConnection(rtcConfig);
-    pc.ontrack=e=>{viewerVideo.srcObject=e.streams[0];};
-    const roomSnap=await roomRef.get();
-    const offer=(await roomRef.get()).data().offer;
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer=await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await updateDoc(roomRef,{answer});
-    pc.onicecandidate=e=>{if(e.candidate)addDoc(collection(roomRef,"ice"),e.candidate.toJSON());};
-    onSnapshot(collection(roomRef,"ice"),snap=>{
-      snap.docChanges().forEach(c=>{if(c.type==="added")pc.addIceCandidate(c.doc.data());});
+    pc = new RTCPeerConnection(rtcConfig);
+    pc.ontrack = e => {viewerVideo.srcObject = e.streams[0];};
+
+    onSnapshot(roomRef, async snap=>{
+      const s = snap.data();
+      if(s?.offer && !pc.currentRemoteDescription){
+        await pc.setRemoteDescription(new RTCSessionDescription(s.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await updateDoc(roomRef,{answer});
+      }
+    });
+
+    onSnapshot(collection(roomRef,"ice"), snap=>{
+      snap.docChanges().forEach(c=>{
+        if(c.type==="added") pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+      });
     });
   }
 };
@@ -295,7 +301,6 @@ window.startMic=async()=>{
 };
 
 window.goHome=()=>location.reload();
-
 </script>
 </body>
 </html>
