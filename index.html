@@ -35,9 +35,10 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 
 <div class="topbar">
   <strong>📺 Mini Live</strong>
-  <div>
+  <div id="authArea">
     <button id="loginBtn" class="btn-blue" onclick="login()">Googleログイン</button>
     <img id="homeAvatar" class="avatar hidden">
+    <button id="logoutBtn" class="btn-gray hidden" onclick="logout()">ログアウト</button>
   </div>
 </div>
 
@@ -54,19 +55,17 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 
 <!-- ADMIN -->
 <div id="adminSetup" class="page hidden">
-  <button class="btn-gray" onclick="backHome()">← 戻る</button>
+  <button class="btn-gray" onclick="goHome()">← 戻る</button>
   <h2>🎬 ライブ管理</h2>
-
   <div class="panel">
     <input id="streamTitle" placeholder="配信タイトル">
     <button class="btn-red" onclick="startLive()">🔴 ライブ開始</button>
-    <button class="btn-gray" onclick="endLive()">⏹ ライブ終了</button>
   </div>
 </div>
 
 <!-- VIEWER -->
 <div id="viewer" class="page hidden">
-  <button class="btn-gray" onclick="backHome()">← 戻る</button>
+  <button class="btn-gray" onclick="goHome()">← 戻る</button>
   <h2 id="viewerTitle"></h2>
 
   <div class="panel">
@@ -74,15 +73,13 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
   </div>
 
   <div class="panel">
-    <strong>📊 投票</strong><br><br>
-    <button class="btn-gray" onclick="vote(1)">👍 良い</button>
-    <button class="btn-gray" onclick="vote(-1)">👎 微妙</button>
-    <div id="voteResult"><small>まだ投票はありません</small></div>
+    <button class="btn-gray" onclick="vote(1)">👍</button>
+    <button class="btn-gray" onclick="vote(-1)">👎</button>
+    <div id="voteResult"><small>投票なし</small></div>
   </div>
 
   <div class="panel">
-    <strong>💬 コメント</strong>
-    <input id="commentInput" placeholder="コメントを書く">
+    <input id="commentInput" placeholder="コメント">
     <button class="btn-blue" onclick="sendComment()">送信</button>
     <div id="commentList"></div>
   </div>
@@ -92,19 +89,21 @@ input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;p
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup,
+  onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, onSnapshot,
   query, orderBy, deleteDoc, doc, updateDoc, increment
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 /* Firebase */
-const firebaseConfig = {
+const app = initializeApp({
   apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
   authDomain: "k1t0-live-video.firebaseapp.com",
-  projectId: "k1t0-live-video",
-};
-const app = initializeApp(firebaseConfig);
+  projectId: "k1t0-live-video"
+});
 const auth = getAuth(app);
 const db = getFirestore(app);
 
@@ -116,34 +115,39 @@ const ADMIN_EMAILS = [
 
 let myName="", myAvatar="", isAdmin=false;
 let currentStreamId=null;
-let myViewerDoc=null;
 
-/* Login */
-window.login = async () => {
-  const res = await signInWithPopup(auth, new GoogleAuthProvider());
-  const user = res.user;
-  myName = user.displayName;
-  myAvatar = user.photoURL;
-  homeAvatar.src = myAvatar;
+/* 🔐 ログイン状態保持 */
+onAuthStateChanged(auth,user=>{
+  if(!user)return;
+  myName=user.displayName;
+  myAvatar=user.photoURL;
+  homeAvatar.src=myAvatar;
   homeAvatar.classList.remove("hidden");
+  logoutBtn.classList.remove("hidden");
   loginBtn.classList.add("hidden");
-  if (ADMIN_EMAILS.includes(user.email)) {
-    isAdmin = true;
+
+  if(ADMIN_EMAILS.includes(user.email)){
+    isAdmin=true;
     adminOnly.classList.remove("hidden");
   }
-};
+});
+
+/* Login / Logout */
+window.login=()=>signInWithPopup(auth,new GoogleAuthProvider());
+window.logout=async()=>{await signOut(auth);location.reload();};
 
 /* 配信一覧 */
-const q = query(collection(db,"liveStreams"),orderBy("createdAt","desc"));
-onSnapshot(q,snap=>{
-  streamList.innerHTML="";
-  if(snap.empty){
-    streamList.innerHTML="<small>現在配信中のライブはありません</small>";
-    return;
-  }
-  snap.forEach(d=>{
-    const s=d.data();
-    streamList.innerHTML+=`
+onSnapshot(
+  query(collection(db,"liveStreams"),orderBy("createdAt","desc")),
+  snap=>{
+    streamList.innerHTML="";
+    if(snap.empty){
+      streamList.innerHTML="<small>配信なし</small>";
+      return;
+    }
+    snap.forEach(d=>{
+      const s=d.data();
+      streamList.innerHTML+=`
       <div class="panel row">
         <img src="${s.ownerIcon}" class="avatar">
         <div class="col">
@@ -151,107 +155,79 @@ onSnapshot(q,snap=>{
           <small>${s.ownerName}</small>
         </div>
         <button class="btn-gray" onclick="joinViewer('${d.id}','${s.title}')">視聴</button>
+        ${isAdmin?`<button class="btn-gray" onclick="deleteStream('${d.id}')">🗑</button>`:""}
       </div>`;
-  });
-});
+    });
+  }
+);
 
-/* Admin */
+/* 管理者 */
+window.deleteStream=async(id)=>{
+  if(confirm("削除しますか？"))
+    await deleteDoc(doc(db,"liveStreams",id));
+};
+
 window.openAdmin=()=>{
   home.classList.add("hidden");
   adminSetup.classList.remove("hidden");
 };
 
 window.startLive=async()=>{
-  if(!isAdmin)return;
-  const docRef=await addDoc(collection(db,"liveStreams"),{
-    title:streamTitle.value||"無題の配信",
+  const ref=await addDoc(collection(db,"liveStreams"),{
+    title:streamTitle.value||"無題",
     ownerName:myName,
     ownerIcon:myAvatar,
     createdAt:Date.now(),
     vote:0
   });
-  currentStreamId=docRef.id;
-};
-
-window.endLive=async()=>{
-  if(!isAdmin||!currentStreamId)return;
-  await deleteDoc(doc(db,"liveStreams",currentStreamId));
-  backHome();
+  joinViewer(ref.id,streamTitle.value||"無題");
 };
 
 /* Viewer */
-window.joinViewer=async(id,title)=>{
+window.joinViewer=(id,title)=>{
   currentStreamId=id;
   viewerTitle.textContent=title;
   home.classList.add("hidden");
+  adminSetup.classList.add("hidden");
   viewer.classList.remove("hidden");
 
-  // 視聴者登録
-  myViewerDoc = await addDoc(
-    collection(db,"liveStreams",currentStreamId,"viewers"),
-    { joined: Date.now() }
-  );
+  addDoc(collection(db,"liveStreams",id,"viewers"),{t:Date.now()});
 
-  // 視聴者数監視
+  onSnapshot(collection(db,"liveStreams",id,"viewers"),
+    s=>viewerCount.textContent=s.size);
+
+  onSnapshot(doc(db,"liveStreams",id),
+    d=>voteResult.innerHTML=`<small>投票：${d.data().vote}</small>`);
+
   onSnapshot(
-    collection(db,"liveStreams",currentStreamId,"viewers"),
-    snap => viewerCount.textContent = snap.size
-  );
-
-  loadComments();
-  loadVotes();
-};
-
-/* ページ離脱時 視聴者削除 */
-window.addEventListener("beforeunload", async()=>{
-  if(currentStreamId && myViewerDoc){
-    await deleteDoc(myViewerDoc);
-  }
-});
-
-/* Vote */
-window.vote=async(v)=>{
-  await updateDoc(doc(db,"liveStreams",currentStreamId),{
-    vote:increment(v)
-  });
-};
-
-function loadVotes(){
-  onSnapshot(doc(db,"liveStreams",currentStreamId),d=>{
-    if(!d.exists())return;
-    voteResult.innerHTML=`<small>投票数：${d.data().vote}</small>`;
-  });
-}
-
-/* コメント */
-function loadComments(){
-  const qc=query(
-    collection(db,"liveStreams",currentStreamId,"comments"),
-    orderBy("time")
-  );
-  onSnapshot(qc,s=>{
-    commentList.innerHTML="";
-    s.forEach(d=>{
-      const c=d.data();
-      commentList.innerHTML+=`<small>${c.name}：${c.text}</small><br>`;
-    });
-  });
-}
-
-window.sendComment=async()=>{
-  if(!commentInput.value)return;
-  await addDoc(
-    collection(db,"liveStreams",currentStreamId,"comments"),
-    {
-      name:myName||"匿名",
-      text:commentInput.value,
-      time:Date.now()
+    query(collection(db,"liveStreams",id,"comments"),orderBy("time")),
+    s=>{
+      commentList.innerHTML="";
+      s.forEach(d=>{
+        const c=d.data();
+        commentList.innerHTML+=`<small>${c.name}：${c.text}</small><br>`;
+      });
     }
   );
+};
+
+/* Vote / Comment */
+window.vote=v=>updateDoc(
+  doc(db,"liveStreams",currentStreamId),
+  {vote:increment(v)}
+);
+
+window.sendComment=()=>{
+  if(!commentInput.value)return;
+  addDoc(collection(db,"liveStreams",currentStreamId,"comments"),{
+    name:myName||"匿名",
+    text:commentInput.value,
+    time:Date.now()
+  });
   commentInput.value="";
 };
 
-window.backHome=()=>location.reload();
+window.goHome=()=>location.reload();
 </script>
 
 </body>
