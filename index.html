@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Mini Live Streaming</title>
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
@@ -20,12 +20,7 @@ button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:po
 input,textarea{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
 .avatar{width:40px;height:40px;border-radius:50%;object-fit:cover}
 video{width:100%;border-radius:12px;background:#000}
-.topbar{
-  position:fixed;top:0;left:0;right:0;height:56px;
-  background:#181818;border-bottom:1px solid #303030;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 16px;z-index:100
-}
+.topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#181818;border-bottom:1px solid #303030;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .content{padding-top:72px}
 .comment-list{max-height:200px;overflow-y:auto;}
 .comment-item{border-bottom:1px solid #303030;padding:4px 0;display:flex;justify-content:space-between;align-items:center;}
@@ -74,16 +69,13 @@ video{width:100%;border-radius:12px;background:#000}
   <div class="panel">
     <button class="btn-blue" onclick="startScreen()">🖥 画面共有</button>
     <button class="btn-blue" onclick="startMic()">🎙 マイクON</button>
+    <button class="btn-red" onclick="endStream()">⏹ 配信終了</button>
   </div>
 
   <div class="panel">
     <button class="btn-gray" onclick="vote(1)">👍</button>
     <button class="btn-gray" onclick="vote(-1)">👎</button>
     <div id="voteResult"></div>
-  </div>
-
-  <div class="panel">
-    <button class="btn-red" onclick="endStream()">⏹ 配信終了</button>
   </div>
 
   <div class="panel">
@@ -138,6 +130,8 @@ const db = getFirestore(app);
 
 let myUid="", myName="", myAvatar="";
 let currentStreamId=null;
+let pc=null;
+let localStream=null;
 let viewerDoc=null;
 
 /* 管理者リスト */
@@ -202,7 +196,7 @@ window.startLive=async()=>{
 };
 
 /* 入室 */
-window.joinStream=(id)=>{
+window.joinStream=async(id)=>{
   currentStreamId=id;
 
   const streamRef=doc(db,"liveStreams",id);
@@ -210,7 +204,7 @@ window.joinStream=(id)=>{
 
   onSnapshot(streamRef,d=>{
     const s=d.data();
-    if(!s){goHome();return;} // 削除されていた場合
+    if(!s){goHome();return;}
     home.classList.add("hidden");
     adminSetup.classList.add("hidden");
 
@@ -220,31 +214,71 @@ window.joinStream=(id)=>{
       voteResult.textContent="投票："+s.vote;
       loadComments("streamer");
       setupViewersCount(viewersCol,"streamer");
+      initStreamer();
     } else {
       viewer.classList.remove("hidden");
       viewerTitle.textContent=s.title;
       voteResultViewer.textContent="投票："+s.vote;
       loadComments("viewer");
       setupViewersCount(viewersCol,"viewer");
-      addViewer(viewersCol); // 自分を追加
+      addViewer(viewersCol);
     }
   });
 };
 
-/* 投票 */
-window.vote=v=>updateDoc(doc(db,"liveStreams",currentStreamId),{vote:increment(v)});
+/* WebRTC設定 */
+const servers={iceServers:[{urls:["stun:stun.l.google.com:19302"]}]};
+
+async function initStreamer(){
+  localStream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+  const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  micStream.getTracks().forEach(t=>localStream.addTrack(t));
+  streamVideo.srcObject=localStream;
+
+  pc=new RTCPeerConnection(servers);
+  localStream.getTracks().forEach(track=>pc.addTrack(track,localStream));
+
+  const offer=await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const offerRef=doc(db,"liveStreams",currentStreamId,"offer","desc");
+  await updateDoc(offerRef,{sdp:offer.sdp,type:offer.type}).catch(async()=>await offerRef.set({sdp:offer.sdp,type:offer.type}));
+
+  pc.onicecandidate=e=>{
+    if(e.candidate) addDoc(collection(db,"liveStreams",currentStreamId,"ice"),{candidate:e.candidate.toJSON()});
+  };
+}
+
+async function initViewer(){
+  pc=new RTCPeerConnection(servers);
+  pc.ontrack=e=>viewerVideo.srcObject=e.streams[0];
+
+  const offerRef=doc(db,"liveStreams",currentStreamId,"offer","desc");
+  const offerSnap=await offerRef.get();
+  const offerData=offerSnap.data();
+  await pc.setRemoteDescription(offerData);
+
+  const answer=await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  await updateDoc(offerRef,{answer:{sdp:answer.sdp,type:answer.type}});
+
+  const iceCol=collection(db,"liveStreams",currentStreamId,"ice");
+  onSnapshot(iceCol,snap=>{
+    snap.docChanges().forEach(c=>{
+      const data=c.doc.data();
+      if(data.candidate) pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    });
+  });
+}
 
 /* コメント */
 const bannedWords = ["spam","badword"];
 window.sendComment=async()=>{
   const text=commentInput.value.trim();
   if(!text) return;
-  if(text.length>200) return alert("コメントが長すぎます");
   for(const w of bannedWords) if(text.includes(w)) return alert("禁止ワードが含まれています");
   await addDoc(collection(db,"liveStreams",currentStreamId,"comments"),{
-    name:myName||"匿名",
-    text,
-    time:Date.now()
+    name:myName||"匿名",text,time:Date.now()
   });
   commentInput.value="";
 };
@@ -256,55 +290,36 @@ function loadComments(mode){
     list.innerHTML="";
     snap.forEach(d=>{
       const c=d.data();
-      const isOwner = isAdmin;
-      list.innerHTML+=`<div class="comment-item"><span><strong>${c.name}</strong>: ${c.text}</span>${isOwner?`<button class="btn-red" onclick="deleteComment('${d.id}')">×</button>`:""}</div>`;
+      const delBtn=isAdmin?` <button class="btn-red" onclick="deleteComment('${d.id}')">×</button>`:"";
+      list.innerHTML+=`<div class="comment-item"><span><strong>${c.name}</strong>: ${c.text}</span>${delBtn}</div>`;
     });
-    list.scrollTop = list.scrollHeight;
+    list.scrollTop=list.scrollHeight;
   });
 }
 
-window.deleteComment=async(commentId)=>{
-  if(confirm("コメントを削除しますか？")){
-    await deleteDoc(doc(db,"liveStreams",currentStreamId,"comments",commentId));
-  }
-};
+window.deleteComment=async(commentId)=>{if(confirm("コメントを削除しますか？")) await deleteDoc(doc(db,"liveStreams",currentStreamId,"comments",commentId));};
+
+/* 投票 */
+window.vote=v=>updateDoc(doc(db,"liveStreams",currentStreamId),{vote:increment(v)});
 
 /* 配信終了 */
-window.endStream=async()=>{
-  if(confirm("配信を終了しますか？")){
-    await deleteDoc(doc(db,"liveStreams",currentStreamId));
-    goHome();
-  }
-};
+window.endStream=async()=>{if(confirm("配信を終了しますか？")){await deleteDoc(doc(db,"liveStreams",currentStreamId));goHome();}};
 
 /* 視聴者数 */
 function setupViewersCount(col,mode){
-  const countSpan = mode==="streamer"?document.getElementById("viewerCount"):document.getElementById("viewerCountViewer");
-  onSnapshot(col,snap=>{
-    countSpan.textContent = snap.size;
-  });
+  const countSpan=mode==="streamer"?document.getElementById("viewerCount"):document.getElementById("viewerCountViewer");
+  onSnapshot(col,snap=>countSpan.textContent=snap.size);
 }
-
-/* 視聴者追加 */
 async function addViewer(col){
   if(!myUid) return;
-  viewerDoc = doc(col,myUid);
+  viewerDoc=doc(col,myUid);
   await viewerDoc.set({joinedAt:Date.now()});
-  window.addEventListener("beforeunload",async()=>{
-    await viewerDoc.delete().catch(()=>{});
-  });
+  window.addEventListener("beforeunload",async()=>{await viewerDoc.delete().catch(()=>{});});
 }
 
-/* 配信者：画面共有・マイク */
-window.startScreen=async()=>{
-  const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  streamVideo.srcObject=s;
-};
-window.startMic=async()=>{
-  const m=await navigator.mediaDevices.getUserMedia({audio:true});
-  if(streamVideo.srcObject)
-    m.getTracks().forEach(t=>streamVideo.srcObject.addTrack(t));
-};
+/* 画面共有・マイク */
+window.startScreen=async()=>{const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});streamVideo.srcObject=s;localStream=s;initStreamer();}
+window.startMic=async()=>{const m=await navigator.mediaDevices.getUserMedia({audio:true});if(streamVideo.srcObject)m.getTracks().forEach(t=>streamVideo.srcObject.addTrack(t));}
 
 /* ホームに戻る */
 window.goHome=()=>location.reload();
