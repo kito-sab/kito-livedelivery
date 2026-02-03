@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mini Live Streaming</title>
-
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
-h1,h2{margin:0 0 12px}
+h1,h2,h3{margin:0 0 12px}
 small{color:#aaa}
 .hidden{display:none}
 .page{padding:16px}
@@ -19,8 +18,7 @@ button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:po
 .btn-blue{background:#065fd4;color:#fff}
 .btn-gray{background:#303030;color:#fff}
 input,textarea{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
-textarea{resize:none}
-.avatar{width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid #303030}
+.avatar{width:40px;height:40px;border-radius:50%;object-fit:cover}
 video{width:100%;border-radius:12px;background:#000}
 .topbar{
   position:fixed;top:0;left:0;right:0;height:56px;
@@ -29,16 +27,10 @@ video{width:100%;border-radius:12px;background:#000}
   padding:0 16px;z-index:100
 }
 .content{padding-top:72px}
-#userProfile{
-  position:fixed; bottom:16px; left:16px; width:220px;
-  display:flex; align-items:center; gap:8px; border-radius:12px;
-  background:#181818; border:1px solid #303030; padding:12px;
-  flex-direction:column; z-index:50;
-}
-#userProfile img{width:60px;height:60px}
+.comment-list{max-height:200px;overflow-y:auto;}
+.comment-item{border-bottom:1px solid #303030;padding:4px 0;display:flex;justify-content:space-between;align-items:center;}
 </style>
 </head>
-
 <body>
 
 <div class="topbar">
@@ -91,7 +83,18 @@ video{width:100%;border-radius:12px;background:#000}
   </div>
 
   <div class="panel">
-    <button class="btn-red" onclick="endLive()">🛑 配信終了</button>
+    <button class="btn-red" onclick="endStream()">⏹ 配信終了</button>
+  </div>
+
+  <div class="panel">
+    <h3>💬 コメント</h3>
+    <textarea id="commentInput" placeholder="コメント"></textarea>
+    <button class="btn-blue" onclick="sendComment()">送信</button>
+    <div id="commentList" class="comment-list"></div>
+  </div>
+
+  <div class="panel">
+    👀 視聴者数：<span id="viewerCount">0</span> 人
   </div>
 </div>
 
@@ -101,40 +104,29 @@ video{width:100%;border-radius:12px;background:#000}
   <h2 id="viewerTitle"></h2>
 
   <div class="panel">
-    👀 視聴者数：<span id="viewerCount">0</span> 人
-  </div>
-
-  <div class="panel">
     <video id="viewerVideo" autoplay playsinline></video>
   </div>
 
   <div class="panel">
-    <button class="btn-gray" onclick="vote(1)">👍</button>
-    <button class="btn-gray" onclick="vote(-1)">👎</button>
+    👀 視聴者数：<span id="viewerCountViewer">0</span> 人
+  </div>
+
+  <div class="panel">
     <div id="voteResultViewer"></div>
   </div>
 
   <div class="panel">
-    <input id="commentInput" placeholder="コメント">
-    <button class="btn-blue" onclick="sendComment()">送信</button>
-    <div id="commentList"></div>
+    <h3>💬 コメント</h3>
+    <div id="commentListViewer" class="comment-list"></div>
   </div>
 </div>
 
-</div>
-
-<!-- 左下ユーザープロフィール -->
-<div id="userProfile" class="panel">
-  <img id="profileAvatar" class="avatar" src="">
-  <input id="profileName" placeholder="名前">
-  <textarea id="profileIntro" placeholder="自己紹介" rows="3"></textarea>
-  <button class="btn-blue" onclick="saveProfile()">保存</button>
 </div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, updateDoc, onSnapshot, query, orderBy, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, doc, deleteDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const app = initializeApp({
   apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
@@ -146,8 +138,11 @@ const db = getFirestore(app);
 
 let myUid="", myName="", myAvatar="";
 let currentStreamId=null;
-let pc=null;
-let localStream=null;
+let viewerDoc=null;
+
+/* 管理者リスト */
+const ADMIN_EMAILS=["kito.0420jp@gmail.com","masato.0420jp@gmail.com"];
+let isAdmin=false;
 
 /* Auth */
 onAuthStateChanged(auth,u=>{
@@ -159,8 +154,8 @@ onAuthStateChanged(auth,u=>{
   homeAvatar.classList.remove("hidden");
   logoutBtn.classList.remove("hidden");
   loginBtn.classList.add("hidden");
-  adminOnly.classList.remove("hidden");
-  loadProfile();
+  isAdmin = ADMIN_EMAILS.includes(u.email);
+  if(isAdmin) adminOnly.classList.remove("hidden");
 });
 
 loginBtn.onclick=()=>signInWithPopup(auth,new GoogleAuthProvider());
@@ -169,9 +164,9 @@ logoutBtn.onclick=async()=>{await signOut(auth);location.reload();};
 /* 配信一覧 */
 onSnapshot(query(collection(db,"liveStreams"),orderBy("createdAt","desc")),snap=>{
   streamList.innerHTML="";
-  if(snap.empty){ streamList.innerHTML="<small>配信なし</small>"; return; }
   snap.forEach(d=>{
     const s=d.data();
+    const isOwner = s.ownerUid===myUid;
     streamList.innerHTML+=`
       <div class="panel row">
         <img src="${s.ownerIcon}" class="avatar">
@@ -180,13 +175,20 @@ onSnapshot(query(collection(db,"liveStreams"),orderBy("createdAt","desc")),snap=
           <small>${s.ownerName}</small>
         </div>
         <button class="btn-gray" onclick="joinStream('${d.id}')">入室</button>
+        ${isOwner?`<button class="btn-red" onclick="deleteStream('${d.id}')">×</button>`:""}
       </div>`;
   });
 });
 
-/* 管理者 */
-window.openAdmin=()=>{ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); }
+/* 配信削除 */
+window.deleteStream=async(id)=>{
+  if(confirm("この配信を削除しますか？")){
+    await deleteDoc(doc(db,"liveStreams",id));
+  }
+};
 
+/* 作成 */
+window.openAdmin=()=>{home.classList.add("hidden");adminSetup.classList.remove("hidden");};
 window.startLive=async()=>{
   const ref=await addDoc(collection(db,"liveStreams"),{
     title:streamTitle.value||"無題",
@@ -194,65 +196,21 @@ window.startLive=async()=>{
     ownerName:myName,
     ownerIcon:myAvatar,
     createdAt:Date.now(),
-    vote:0,
-    viewers:0
+    vote:0
   });
   joinStream(ref.id);
-}
+};
 
-window.endLive=async()=>{
-  if(!currentStreamId) return;
-  await deleteDoc(doc(db,"liveStreams",currentStreamId));
-  location.reload();
-}
-
-/* WebRTC */
-async function initStream() {
-  localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-  streamVideo.srcObject = localStream;
-
-  pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.l.google.com:19302"}] });
-  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-
-  const offerRef = collection(db,"liveStreams",currentStreamId,"offer");
-  const answerRef = collection(db,"liveStreams",currentStreamId,"answer");
-  const iceRef = collection(db,"liveStreams",currentStreamId,"ice");
-
-  pc.onicecandidate = e=>{
-    if(e.candidate) addDoc(iceRef,e.candidate.toJSON());
-  }
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await addDoc(offerRef,offer.toJSON());
-
-  onSnapshot(answerRef, snapshot=>{
-    snapshot.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const ans = change.doc.data();
-        if(!pc.currentRemoteDescription){
-          await pc.setRemoteDescription(ans);
-        }
-      }
-    });
-  });
-
-  onSnapshot(iceRef, snapshot=>{
-    snapshot.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const candidate = change.doc.data();
-        try { await pc.addIceCandidate(candidate); } catch(e){ console.log(e); }
-      }
-    });
-  });
-}
-
-/* 視聴者 */
-async function joinStream(id){
+/* 入室 */
+window.joinStream=(id)=>{
   currentStreamId=id;
-  const streamDoc = doc(db,"liveStreams",id);
-  onSnapshot(streamDoc, d=>{
+
+  const streamRef=doc(db,"liveStreams",id);
+  const viewersCol=collection(db,"liveStreams",id,"viewers");
+
+  onSnapshot(streamRef,d=>{
     const s=d.data();
+    if(!s){goHome();return;} // 削除されていた場合
     home.classList.add("hidden");
     adminSetup.classList.add("hidden");
 
@@ -260,116 +218,96 @@ async function joinStream(id){
       streamer.classList.remove("hidden");
       streamerTitle.textContent="🔴 配信中："+s.title;
       voteResult.textContent="投票："+s.vote;
-      initStream();
-    }else{
+      loadComments("streamer");
+      setupViewersCount(viewersCol,"streamer");
+    } else {
       viewer.classList.remove("hidden");
       viewerTitle.textContent=s.title;
       voteResultViewer.textContent="投票："+s.vote;
-      joinViewer();
+      loadComments("viewer");
+      setupViewersCount(viewersCol,"viewer");
+      addViewer(viewersCol); // 自分を追加
     }
   });
-
-  // 視聴者数カウント
-  updateDoc(doc(db,"liveStreams",id),{viewers:increment(1)});
-}
-
-async function joinViewer(){
-  pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.l.google.com:19302"}] });
-  const videoEl = viewerVideo;
-
-  const offerRef = collection(db,"liveStreams",currentStreamId,"offer");
-  const answerRef = collection(db,"liveStreams",currentStreamId,"answer");
-  const iceRef = collection(db,"liveStreams",currentStreamId,"ice");
-
-  pc.ontrack = e=>{ videoEl.srcObject = e.streams[0]; }
-  pc.onicecandidate = e=>{
-    if(e.candidate) addDoc(iceRef,e.candidate.toJSON());
-  }
-
-  onSnapshot(offerRef, async snapshot=>{
-    snapshot.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const off = change.doc.data();
-        await pc.setRemoteDescription(off);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await addDoc(answerRef,answer.toJSON());
-      }
-    });
-  });
-
-  onSnapshot(iceRef, snapshot=>{
-    snapshot.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const candidate = change.doc.data();
-        try { await pc.addIceCandidate(candidate); } catch(e){ console.log(e); }
-      }
-    });
-  });
-}
+};
 
 /* 投票 */
 window.vote=v=>updateDoc(doc(db,"liveStreams",currentStreamId),{vote:increment(v)});
 
 /* コメント */
+const bannedWords = ["spam","badword"];
 window.sendComment=async()=>{
-  if(!commentInput.value) return;
+  const text=commentInput.value.trim();
+  if(!text) return;
+  if(text.length>200) return alert("コメントが長すぎます");
+  for(const w of bannedWords) if(text.includes(w)) return alert("禁止ワードが含まれています");
   await addDoc(collection(db,"liveStreams",currentStreamId,"comments"),{
     name:myName||"匿名",
-    text:commentInput.value,
+    text,
     time:Date.now()
   });
   commentInput.value="";
-}
+};
 
-// 視聴者数表示
-onSnapshot(query(collection(db,"liveStreams")), snap=>{
-  snap.forEach(d=>{
-    if(d.id === currentStreamId){
-      const data = d.data();
-      if(viewerCount) viewerCount.textContent = data.viewers || 0;
-    }
+function loadComments(mode){
+  const listId = mode==="streamer"?"commentList":"commentListViewer";
+  const list = document.getElementById(listId);
+  onSnapshot(query(collection(db,"liveStreams",currentStreamId,"comments"),orderBy("time")),snap=>{
+    list.innerHTML="";
+    snap.forEach(d=>{
+      const c=d.data();
+      const isOwner = isAdmin;
+      list.innerHTML+=`<div class="comment-item"><span><strong>${c.name}</strong>: ${c.text}</span>${isOwner?`<button class="btn-red" onclick="deleteComment('${d.id}')">×</button>`:""}</div>`;
+    });
+    list.scrollTop = list.scrollHeight;
   });
-});
-
-window.goHome=()=>location.reload();
-
-/* 画面共有・マイク */
-window.startScreen=async()=>{
-  const s = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  s.getTracks().forEach(t=>localStream.addTrack(t));
-  streamVideo.srcObject = localStream;
-}
-window.startMic=async()=>{
-  const m = await navigator.mediaDevices.getUserMedia({audio:true});
-  m.getTracks().forEach(t=>localStream.addTrack(t));
-  streamVideo.srcObject = localStream;
 }
 
-/* ユーザープロフィール */
-async function saveProfile(){
-  if(!myUid) return alert("ログインしてください");
-  const name = profileName.value || myName;
-  const intro = profileIntro.value || "";
-  const userRef = doc(db,"users",myUid);
-  await updateDoc(userRef,{displayName:name,intro:intro}).catch(async ()=>{
-    await addDoc(collection(db,"users"),{uid:myUid,displayName:name,intro:intro});
+window.deleteComment=async(commentId)=>{
+  if(confirm("コメントを削除しますか？")){
+    await deleteDoc(doc(db,"liveStreams",currentStreamId,"comments",commentId));
+  }
+};
+
+/* 配信終了 */
+window.endStream=async()=>{
+  if(confirm("配信を終了しますか？")){
+    await deleteDoc(doc(db,"liveStreams",currentStreamId));
+    goHome();
+  }
+};
+
+/* 視聴者数 */
+function setupViewersCount(col,mode){
+  const countSpan = mode==="streamer"?document.getElementById("viewerCount"):document.getElementById("viewerCountViewer");
+  onSnapshot(col,snap=>{
+    countSpan.textContent = snap.size;
   });
-  profileAvatar.src = myAvatar;
-  alert("保存しました！");
 }
 
-async function loadProfile(){
+/* 視聴者追加 */
+async function addViewer(col){
   if(!myUid) return;
-  const userRef = doc(db,"users",myUid);
-  onSnapshot(userRef, d=>{
-    if(!d.exists()) return;
-    const data = d.data();
-    profileName.value = data.displayName || myName;
-    profileIntro.value = data.intro || "";
-    profileAvatar.src = myAvatar;
+  viewerDoc = doc(col,myUid);
+  await viewerDoc.set({joinedAt:Date.now()});
+  window.addEventListener("beforeunload",async()=>{
+    await viewerDoc.delete().catch(()=>{});
   });
 }
+
+/* 配信者：画面共有・マイク */
+window.startScreen=async()=>{
+  const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+  streamVideo.srcObject=s;
+};
+window.startMic=async()=>{
+  const m=await navigator.mediaDevices.getUserMedia({audio:true});
+  if(streamVideo.srcObject)
+    m.getTracks().forEach(t=>streamVideo.srcObject.addTrack(t));
+};
+
+/* ホームに戻る */
+window.goHome=()=>location.reload();
 </script>
 </body>
 </html>
