@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mini Live Streaming (画面＋音声)</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mini Live Streaming</title>
 <style>
 body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
 .hidden{display:none}
@@ -15,12 +15,10 @@ button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:po
 .btn-red{background:#cc0000;color:#fff}
 .btn-blue{background:#065fd4;color:#fff}
 .btn-gray{background:#303030;color:#fff}
-textarea{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
+input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
 video{width:100%;border-radius:12px;background:#000}
 .topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#181818;border-bottom:1px solid #303030;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
 .content{padding-top:72px}
-.comment-list{max-height:200px;overflow-y:auto;}
-.comment-item{border-bottom:1px solid #303030;padding:4px 0;}
 </style>
 </head>
 <body>
@@ -29,47 +27,66 @@ video{width:100%;border-radius:12px;background:#000}
   <strong>📺 Mini Live</strong>
   <div>
     <button id="loginBtn" class="btn-blue">Googleログイン</button>
+    <img id="homeAvatar" class="avatar hidden" style="width:40px;height:40px;border-radius:50%">
     <button id="logoutBtn" class="btn-gray hidden">ログアウト</button>
   </div>
 </div>
 
 <div class="content">
+
+<!-- HOME -->
 <div id="home" class="page">
   <h1>配信一覧</h1>
   <div id="streamList"></div>
-  <button class="btn-red hidden" id="createBtn">ライブ作成</button>
+  <div id="adminOnly" class="hidden">
+    <button class="btn-red" onclick="openAdmin()">管理者：ライブ作成</button>
+  </div>
 </div>
 
+<!-- ADMIN -->
+<div id="adminSetup" class="page hidden">
+  <button class="btn-gray" onclick="goHome()">← 戻る</button>
+  <h2>🎬 ライブ管理</h2>
+  <div class="panel">
+    <input id="streamTitle" placeholder="配信タイトル">
+    <button class="btn-red" onclick="startLive()">🔴 ライブ開始</button>
+  </div>
+</div>
+
+<!-- STREAMER -->
 <div id="streamer" class="page hidden">
   <h2 id="streamerTitle"></h2>
   <div class="panel">
-    <button class="btn-blue" id="startBtn">🖥 配信開始 (画面＋音声)</button>
-    <button class="btn-red" id="endBtn">⏹ 配信終了</button>
+    <video id="streamVideo" autoplay muted playsinline></video>
   </div>
   <div class="panel">
-    <textarea id="commentInput" placeholder="コメント"></textarea>
-    <button class="btn-blue" id="sendComment">送信</button>
-    <div id="commentList" class="comment-list"></div>
+    <button class="btn-blue" onclick="startScreen()">🖥 画面共有</button>
+    <button class="btn-blue" onclick="startMic()">🎙 マイクON</button>
+  </div>
+  <div class="panel">
+    <button class="btn-red" onclick="endLive()">🛑 配信終了</button>
   </div>
 </div>
 
+<!-- VIEWER -->
 <div id="viewer" class="page hidden">
+  <button class="btn-gray" onclick="goHome()">← 戻る</button>
   <h2 id="viewerTitle"></h2>
+  <div class="panel">
+    👀 視聴者数：<span id="viewerCount">0</span> 人
+  </div>
   <div class="panel">
     <video id="viewerVideo" autoplay playsinline></video>
   </div>
-  <div class="panel">
-    <div id="commentListViewer" class="comment-list"></div>
-  </div>
 </div>
+
 </div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, doc, onSnapshot, updateDoc, orderBy, query, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, onSnapshot, deleteDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-// Firebase
 const app = initializeApp({
   apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
   authDomain: "k1t0-live-video.firebaseapp.com",
@@ -78,105 +95,168 @@ const app = initializeApp({
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let myUid="", myName="", pc=null, localStream=null, currentStreamId=null;
+let myUid="", myName="", myAvatar="";
+let currentStreamId=null;
+let localStream=null;
+let pc=null;
 
-// Auth
-onAuthStateChanged(auth,u=>{
+/* Auth */
+onAuthStateChanged(auth, u => {
   if(!u) return;
-  myUid=u.uid; myName=u.displayName;
-  loginBtn.classList.add("hidden");
+  myUid = u.uid;
+  myName = u.displayName;
+  myAvatar = u.photoURL;
+  homeAvatar.src = myAvatar;
+  homeAvatar.classList.remove("hidden");
   logoutBtn.classList.remove("hidden");
-  createBtn.classList.remove("hidden");
+  loginBtn.classList.add("hidden");
+  adminOnly.classList.remove("hidden");
 });
 
-loginBtn.onclick=()=>signInWithPopup(auth,new GoogleAuthProvider());
-logoutBtn.onclick=async()=>{await signOut(auth);location.reload();};
+loginBtn.onclick = () => signInWithPopup(auth,new GoogleAuthProvider());
+logoutBtn.onclick = async()=>{ await signOut(auth); location.reload(); };
 
-// 配信作成
-createBtn.onclick=async()=>{
-  const ref=await addDoc(collection(db,"liveStreams"),{ownerUid:myUid,ownerName:myName,createdAt:Date.now()});
-  startStreaming(ref.id);
-};
+/* 配信一覧表示 */
+onSnapshot(collection(db,"liveStreams"), snap => {
+  streamList.innerHTML="";
+  snap.forEach(d=>{
+    const s = d.data();
+    streamList.innerHTML += `
+      <div class="panel row">
+        <div class="col"><strong>${s.title}</strong><br><small>${s.ownerName}</small></div>
+        <button class="btn-gray" onclick="joinStream('${d.id}')">入室</button>
+      </div>
+    `;
+  });
+});
 
-// 配信開始
-async function startStreaming(streamId){
-  currentStreamId=streamId;
-  home.classList.add("hidden");
-  streamer.classList.remove("hidden");
-  streamerTitle.textContent="🔴 配信中";
+/* 管理者画面 */
+window.openAdmin = ()=>{ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); }
 
-  // 画面＋マイク音声
-  const screen = await navigator.mediaDevices.getDisplayMedia({video:false,audio:true});
-  const mic = await navigator.mediaDevices.getUserMedia({audio:true});
-  mic.getTracks().forEach(t=>screen.addTrack(t));
-  localStream = screen;
-
-  // WebRTC
-  pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-  localStream.getTracks().forEach(track=>pc.addTrack(track,localStream));
-
-  // Offer生成
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  const offerRef = doc(db,"liveStreams",streamId,"offer","desc");
-  await updateDoc(offerRef,{sdp:offer.sdp,type:offer.type}).catch(async()=>await offerRef.set({sdp:offer.sdp,type:offer.type}));
-
-  // ICE
-  pc.onicecandidate=e=>{ if(e.candidate) addDoc(collection(db,"liveStreams",streamId,"ice"),{candidate:e.candidate.toJSON()});};
+window.startLive = async()=>{
+  const ref = await addDoc(collection(db,"liveStreams"),{
+    title: streamTitle.value||"無題",
+    ownerUid: myUid,
+    ownerName: myName,
+    ownerIcon: myAvatar,
+    createdAt: Date.now(),
+    viewers:0
+  });
+  joinStream(ref.id);
 }
 
-// 視聴者参加
-window.joinStream=async(id)=>{
-  currentStreamId=id;
-  home.classList.add("hidden");
-  viewer.classList.remove("hidden");
-  viewerTitle.textContent="視聴中";
+window.endLive = async()=>{
+  if(!currentStreamId) return;
+  await deleteDoc(doc(db,"liveStreams",currentStreamId));
+  location.reload();
+}
 
+/* 配信者：画面共有＋マイク */
+async function startScreen(){
+  const screenStream = await navigator.mediaDevices.getDisplayMedia({video:true, audio:true});
+  if(!localStream) localStream = screenStream;
+  else screenStream.getTracks().forEach(t => localStream.addTrack(t));
+
+  if(!pc) initPeerConnection();
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  streamVideo.srcObject = localStream;
+}
+
+async function startMic(){
+  const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  if(!localStream) localStream = micStream;
+  else micStream.getTracks().forEach(t => localStream.addTrack(t));
+
+  if(!pc) initPeerConnection();
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  streamVideo.srcObject = localStream;
+}
+
+/* WebRTC 初期化 */
+function initPeerConnection(){
   pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-  pc.ontrack=e=>viewerVideo.srcObject=e.streams[0];
 
-  // Offer取得
-  const offerRef = doc(db,"liveStreams",id,"offer","desc");
-  const offerSnap = await offerRef.get();
-  const offerData = offerSnap.data();
-  await pc.setRemoteDescription(offerData);
+  const offerRef = collection(db,"liveStreams",currentStreamId,"offer");
+  const answerRef = collection(db,"liveStreams",currentStreamId,"answer");
+  const iceRef = collection(db,"liveStreams",currentStreamId,"ice");
 
-  // Answer生成
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  await updateDoc(offerRef,{answer:{sdp:answer.sdp,type:answer.type}});
+  pc.onicecandidate = e => { if(e.candidate) addDoc(iceRef,e.candidate.toJSON()); }
 
-  // ICE取得
-  const iceCol = collection(db,"liveStreams",id,"ice");
-  onSnapshot(iceCol,snap=>{
-    snap.docChanges().forEach(c=>{
-      if(c.doc.data().candidate) pc.addIceCandidate(new RTCIceCandidate(c.doc.data().candidate));
+  pc.createOffer().then(offer => pc.setLocalDescription(offer))
+                 .then(()=> addDoc(offerRef, pc.localDescription.toJSON()));
+
+  onSnapshot(answerRef, snapshot=>{
+    snapshot.docChanges().forEach(async change=>{
+      if(change.type==="added" && !pc.currentRemoteDescription){
+        await pc.setRemoteDescription(change.doc.data());
+      }
     });
   });
-};
 
-// コメント
-sendComment.onclick=async()=>{
-  const text=commentInput.value.trim();
-  if(!text) return;
-  await addDoc(collection(db,"liveStreams",currentStreamId,"comments"),{name:myName,text,time:Date.now()});
-  commentInput.value="";
-};
-onSnapshot(query(collection(db,"liveStreams",currentStreamId,"comments"),orderBy("time")),snap=>{
-  commentList.innerHTML=""; commentListViewer.innerHTML="";
-  snap.forEach(d=>{
-    const c=d.data();
-    commentList.innerHTML+=`<div class="comment-item"><strong>${c.name}</strong>: ${c.text}</div>`;
-    commentListViewer.innerHTML+=`<div class="comment-item"><strong>${c.name}</strong>: ${c.text}</div>`;
+  onSnapshot(iceRef, snapshot=>{
+    snapshot.docChanges().forEach(async change=>{
+      if(change.type==="added") try{ await pc.addIceCandidate(change.doc.data()); } catch(e){console.log(e);}
+    });
   });
-});
+}
 
-// 配信終了
-endBtn.onclick=async()=>{
-  await deleteDoc(doc(db,"liveStreams",currentStreamId));
-  pc?.close();
-  streamer.classList.add("hidden"); home.classList.remove("hidden");
-};
+/* 視聴者入室 */
+async function joinStream(id){
+  currentStreamId = id;
+
+  const docRef = doc(db,"liveStreams",id);
+  onSnapshot(docRef, d=>{
+    const s = d.data();
+    home.classList.add("hidden");
+    adminSetup.classList.add("hidden");
+
+    if(s.ownerUid === myUid){
+      streamer.classList.remove("hidden");
+      streamerTitle.textContent = "🔴 配信中：" + s.title;
+    } else {
+      viewer.classList.remove("hidden");
+      viewerTitle.textContent = s.title;
+      joinViewer();
+    }
+
+    // 視聴者数更新
+    if(s.ownerUid !== myUid) updateDoc(docRef,{viewers: increment(1)});
+    if(viewerCount) viewerCount.textContent = s.viewers || 0;
+  });
+}
+
+/* 視聴者：画面＋音声受信 */
+async function joinViewer(){
+  const pcViewer = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+  const viewerVideo = document.getElementById("viewerVideo");
+  pcViewer.ontrack = e => { viewerVideo.srcObject = e.streams[0]; }
+
+  const offerRef = collection(db,"liveStreams",currentStreamId,"offer");
+  const answerRef = collection(db,"liveStreams",currentStreamId,"answer");
+  const iceRef = collection(db,"liveStreams",currentStreamId,"ice");
+
+  pcViewer.onicecandidate = e => { if(e.candidate) addDoc(iceRef,e.candidate.toJSON()); }
+
+  onSnapshot(offerRef, async snapshot=>{
+    snapshot.docChanges().forEach(async change=>{
+      if(change.type==="added"){
+        await pcViewer.setRemoteDescription(change.doc.data());
+        const answer = await pcViewer.createAnswer();
+        await pcViewer.setLocalDescription(answer);
+        await addDoc(answerRef, pcViewer.localDescription.toJSON());
+      }
+    });
+  });
+
+  onSnapshot(iceRef, snapshot=>{
+    snapshot.docChanges().forEach(async change=>{
+      if(change.type==="added") try{ await pcViewer.addIceCandidate(change.doc.data()); } catch(e){console.log(e);}
+    });
+  });
+}
+
+window.goHome = ()=>location.reload();
 </script>
+
 </body>
 </html>
