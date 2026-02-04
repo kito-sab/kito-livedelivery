@@ -1,239 +1,242 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mini Live Streaming</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K1T0 Live</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+
 <style>
-body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:system-ui}
-h1,h2{margin:0 0 12px}
-small{color:#aaa}
-.hidden{display:none}
-.page{padding:16px}
-.panel{background:#181818;border:1px solid #303030;border-radius:12px;padding:12px;margin-bottom:12px}
-.row{display:flex;gap:12px;align-items:center}
-.col{flex:1}
-button{border:none;border-radius:18px;padding:8px 16px;font-weight:700;cursor:pointer}
-.btn-red{background:#cc0000;color:#fff}
-.btn-blue{background:#065fd4;color:#fff}
-.btn-gray{background:#303030;color:#fff}
-input{width:100%;background:#121212;border:1px solid #303030;border-radius:8px;padding:8px;color:#fff;margin-bottom:8px}
-video{width:100%;border-radius:12px;background:#000}
-.topbar{position:fixed;top:0;left:0;right:0;height:56px;background:#181818;border-bottom:1px solid #303030;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
-.content{padding-top:72px}
+:root{
+  --bg:#0b0b0d;
+  --panel:#161616;
+  --border:rgba(255,255,255,.08);
+  --accent:#00e5ff;
+  --live:#ff2a2a;
+  --sub:#aaa;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Inter,system-ui;
+  background:var(--bg);
+  color:#fff;
+}
+button{
+  background:transparent;
+  border:1px solid var(--border);
+  color:#fff;
+  padding:8px 14px;
+  border-radius:999px;
+  cursor:pointer;
+}
+button.accent{
+  border-color:var(--accent);
+  box-shadow:0 0 12px rgba(0,229,255,.4);
+}
+input{
+  width:100%;
+  padding:10px 14px;
+  border-radius:10px;
+  background:#0f0f0f;
+  border:1px solid var(--border);
+  color:#fff;
+  margin-bottom:18px;
+}
+header{
+  height:56px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  background:rgba(22,22,22,.7);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+}
+.grid{
+  padding:20px;
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:16px;
+}
+.card{
+  border-radius:14px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+  cursor:pointer;
+}
+.thumb{
+  aspect-ratio:16/9;
+  background:#000;
+}
+.meta{padding:10px}
+.live-page{padding:20px}
+.video{
+  aspect-ratio:16/9;
+  background:#000;
+  border-radius:16px;
+  border:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--sub);
+  margin-bottom:20px;
+}
+.modal-bg{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.6);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+.modal{
+  width:320px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:24px;
+}
 </style>
 </head>
+
 <body>
 
-<div class="topbar">
-  <strong>📺 Mini Live</strong>
+<header>
+  <strong>K1T0 Live</strong>
   <div>
-    <button id="loginBtn" class="btn-blue">Googleログイン</button>
-    <button id="logoutBtn" class="btn-gray hidden">ログアウト</button>
+    <button id="loginBtn" class="accent">Google ログイン</button>
+    <button id="logoutBtn" style="display:none">ログアウト</button>
+    <button id="createBtn" style="display:none" onclick="openCreate()">＋ Live作成</button>
+  </div>
+</header>
+
+<div id="app"></div>
+
+<!-- CREATE MODAL -->
+<div class="modal-bg" id="createModal">
+  <div class="modal">
+    <strong>ライブ作成</strong>
+    <input id="newTitle" placeholder="タイトル">
+    <button class="accent" onclick="createLive()">作成</button>
+    <button onclick="closeCreate()">キャンセル</button>
   </div>
 </div>
 
-<div class="content">
-
-<div id="home" class="page">
-  <h1>配信一覧</h1>
-  <div id="streamList"></div>
-  <button class="btn-red hidden" id="adminBtn" onclick="openAdmin()">管理者：ライブ作成</button>
-</div>
-
-<div id="adminSetup" class="page hidden">
-  <button class="btn-gray" onclick="goHome()">← 戻る</button>
-  <h2>🎬 ライブ管理</h2>
-  <input id="streamTitle" placeholder="配信タイトル">
-  <button class="btn-red" onclick="startLive()">🔴 ライブ開始</button>
-</div>
-
-<div id="streamer" class="page hidden">
-  <h2 id="streamerTitle"></h2>
-  <video id="streamVideo" autoplay muted playsinline></video>
-  <button class="btn-blue" onclick="startScreen()">🖥 画面共有</button>
-  <button class="btn-blue" onclick="startMic()">🎙 マイクON</button>
-  <button class="btn-red" onclick="endLive()">🛑 配信終了</button>
-</div>
-
-<div id="viewer" class="page hidden">
-  <h2 id="viewerTitle"></h2>
-  <video id="viewerVideo" autoplay playsinline></video>
-</div>
-
-</div>
-
+<!-- FIREBASE -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, onSnapshot, updateDoc, query, orderBy, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  deleteDoc
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+/* 🔥 Firebase設定 */
 const firebaseConfig = {
-  apiKey: "AIzaSyDKNvq5KLhjhXx-SKWrgI-PRVbCfaST0Lk",
-  authDomain: "k1t0-live-video.firebaseapp.com",
-  projectId: "k1t0-live-video"
+  apiKey: "AIzaSyC0dDWCq0fawXBsk0IJTruqbKKM_-Cwqsw",
+  authDomain: "k1t0-live-video-153cb.firebaseapp.com",
+  projectId: "k1t0-live-video-153cb"
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+const appFB = initializeApp(firebaseConfig);
+const auth = getAuth(appFB);
+const db = getFirestore(appFB);
+const provider = new GoogleAuthProvider();
 
-let myUid="", currentStreamId=null, pc=null, localStream=null;
+/* ===== STATE ===== */
+let user = null;
+let streams = [];
 
-const loginBtn = document.getElementById("loginBtn");
-const logoutBtn = document.getElementById("logoutBtn");
-const adminBtn = document.getElementById("adminBtn");
+/* ===== AUTH ===== */
+loginBtn.onclick = () => signInWithPopup(auth, provider);
+logoutBtn.onclick = () => signOut(auth);
 
-onAuthStateChanged(auth, user => {
-  if(user){
-    myUid = user.uid;
-    loginBtn.classList.add("hidden");
-    logoutBtn.classList.remove("hidden");
-    adminBtn.classList.remove("hidden");
-  }
+onAuthStateChanged(auth, u=>{
+  user = u;
+  loginBtn.style.display = u ? "none":"inline-block";
+  logoutBtn.style.display = u ? "inline-block":"none";
+  createBtn.style.display = u ? "inline-block":"none";
+  render();
 });
 
-loginBtn.onclick = ()=>signInWithPopup(auth,new GoogleAuthProvider());
-logoutBtn.onclick = async()=>{await signOut(auth); location.reload();}
+/* ===== LIVE CREATE ===== */
+window.openCreate = ()=>createModal.style.display="flex";
+window.closeCreate = ()=>createModal.style.display="none";
 
-/* 配信作成 */
-function openAdmin(){ home.classList.add("hidden"); adminSetup.classList.remove("hidden"); }
-
-async function startLive(){
-  const ref = await addDoc(collection(db,"liveStreams"),{
-    title:document.getElementById("streamTitle").value||"無題",
-    ownerUid:myUid,
+window.createLive = async ()=>{
+  if(!user || !newTitle.value) return;
+  const ref = await addDoc(collection(db,"streams"),{
+    title:newTitle.value,
+    owner:user.uid,
     createdAt:Date.now()
   });
-  joinStream(ref.id);
+  newTitle.value="";
+  closeCreate();
+  location.hash="live="+ref.id;
+};
+
+/* ===== DELETE ===== */
+window.removeLive = async(id)=>{
+  if(!user) return;
+  await deleteDoc(doc(db,"streams",id));
+};
+
+/* ===== RENDER ===== */
+function render(){
+  if(location.hash.startsWith("#live=")){
+    const id = location.hash.split("=")[1];
+    const s = streams.find(v=>v.id===id);
+    if(!s){ location.hash=""; return; }
+
+    app.innerHTML = `
+      <div class="live-page">
+        <div class="video">配信準備中</div>
+        <strong>${s.title}</strong><br><br>
+
+        ${user && user.uid===s.owner ? `
+          <button>🎤 マイク ON/OFF</button>
+          <button>🖥 画面共有</button>
+          <button onclick="removeLive('${id}')">終了</button>
+        `:""}
+      </div>
+    `;
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="grid">
+      ${streams.map(s=>`
+        <div class="card" onclick="location.hash='live=${s.id}'">
+          <div class="thumb"></div>
+          <div class="meta">
+            <strong>${s.title}</strong>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
-/* 配信終了 */
-async function endLive(){
-  if(!currentStreamId) return;
-  await deleteDoc(doc(db,"liveStreams",currentStreamId));
-  location.reload();
-}
-
-/* 配信一覧更新 */
-onSnapshot(query(collection(db,"liveStreams"),orderBy("createdAt","desc")), snap=>{
-  const list = document.getElementById("streamList");
-  list.innerHTML="";
-  snap.forEach(d=>{
-    const s=d.data();
-    list.innerHTML += `<div>${s.title} <button onclick="joinStream('${d.id}')">入室</button></div>`;
-  });
+/* ===== FIRESTORE ===== */
+onSnapshot(collection(db,"streams"), snap=>{
+  streams = snap.docs.map(d=>({id:d.id,...d.data()}));
+  render();
 });
 
-/* 配信に入室 */
-async function joinStream(id){
-  currentStreamId = id;
-  const streamDoc = doc(db,"liveStreams",id);
-
-  onSnapshot(streamDoc, d=>{
-    home.classList.add("hidden");
-    adminSetup.classList.add("hidden");
-    const data = d.data();
-    if(data.ownerUid === myUid){
-      streamer.classList.remove("hidden");
-      document.getElementById("streamerTitle").textContent = "🔴 配信中: "+data.title;
-      initStreamer();
-    }else{
-      viewer.classList.remove("hidden");
-      document.getElementById("viewerTitle").textContent = data.title;
-      initViewer();
-    }
-  });
-}
-
-/* --- WebRTC --- */
-const servers = {iceServers:[{urls:"stun:stun.l.google.com:19302"}]};
-const offerRef = ()=>doc(db,"liveStreams",currentStreamId,"offer","desc");
-const answerRef = ()=>doc(db,"liveStreams",currentStreamId,"answer","desc");
-const iceRef = ()=>collection(db,"liveStreams",currentStreamId,"ice");
-
-/* 配信者初期化 */
-async function initStreamer(){
-  localStream = await navigator.mediaDevices.getUserMedia({audio:true}); // 音声のみ初期
-  document.getElementById("streamVideo").srcObject = localStream;
-
-  pc = new RTCPeerConnection(servers);
-  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-
-  pc.onicecandidate = e=>{ if(e.candidate) addDoc(iceRef(), e.candidate.toJSON()); }
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await updateDoc(offerRef(), {sdp: offer.sdp, type: offer.type}).catch(()=>addDoc(offerRef(), {sdp: offer.sdp, type: offer.type}));
-
-  // answer監視
-  onSnapshot(answerRef(), snap=>{
-    snap.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const ans = change.doc.data();
-        if(!pc.currentRemoteDescription) await pc.setRemoteDescription(ans);
-      }
-    });
-  });
-}
-
-/* 画面共有 */
-async function startScreen(){
-  const screenStream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  screenStream.getTracks().forEach(t=>{
-    pc.addTrack(t, screenStream);
-    localStream.addTrack(t);
-  });
-  document.getElementById("streamVideo").srcObject = localStream;
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await updateDoc(offerRef(), {sdp: offer.sdp, type: offer.type});
-}
-
-/* マイクON */
-async function startMic(){
-  const micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-  micStream.getTracks().forEach(t=>{
-    pc.addTrack(t, micStream);
-    localStream.addTrack(t);
-  });
-  document.getElementById("streamVideo").srcObject = localStream;
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await updateDoc(offerRef(), {sdp: offer.sdp, type: offer.type});
-}
-
-/* 視聴者初期化 */
-async function initViewer(){
-  pc = new RTCPeerConnection(servers);
-  const videoEl = document.getElementById("viewerVideo");
-  pc.ontrack = e=>{ videoEl.srcObject = e.streams[0]; }
-  pc.onicecandidate = e=>{ if(e.candidate) addDoc(iceRef(), e.candidate.toJSON()); }
-
-  // offer監視
-  onSnapshot(offerRef(), async snap=>{
-    snap.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        const off = change.doc.data();
-        await pc.setRemoteDescription(off);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await updateDoc(answerRef(), {sdp: answer.sdp, type: answer.type}).catch(()=>addDoc(answerRef(), {sdp: answer.sdp, type: answer.type}));
-      }
-    });
-  });
-
-  // ICE監視
-  onSnapshot(iceRef(), snap=>{
-    snap.docChanges().forEach(async change=>{
-      if(change.type==="added"){
-        try{ await pc.addIceCandidate(change.doc.data()); }catch(e){ console.log(e);}
-      }
-    });
-  });
-}
-
-window.goHome = ()=>location.reload();
+window.addEventListener("hashchange", render);
 </script>
 
 </body>
