@@ -8,12 +8,107 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
 
 <style>
-body{margin:0;font-family:Inter;background:#0b0b0d;color:#fff}
-header{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #222}
-button{background:#111;border:1px solid #333;color:#fff;padding:8px 14px;border-radius:999px;cursor:pointer}
-.video{aspect-ratio:16/9;background:#000;border-radius:14px;margin-bottom:12px}
-.grid{padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
-.card{border:1px solid #222;border-radius:14px;padding:12px;cursor:pointer}
+:root{
+  --bg:#0b0b0d;
+  --panel:#161616;
+  --border:rgba(255,255,255,.08);
+  --accent:#00e5ff;
+  --live:#ff2a2a;
+  --sub:#aaa;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Inter,system-ui;
+  background:var(--bg);
+  color:#fff;
+}
+button{
+  background:transparent;
+  border:1px solid var(--border);
+  color:#fff;
+  padding:8px 14px;
+  border-radius:999px;
+  cursor:pointer;
+}
+button.accent{
+  border-color:var(--accent);
+  box-shadow:0 0 12px rgba(0,229,255,.4);
+}
+input{
+  width:100%;
+  padding:10px 14px;
+  border-radius:10px;
+  background:#0f0f0f;
+  border:1px solid var(--border);
+  color:#fff;
+  margin-bottom:18px;
+}
+header{
+  height:56px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  background:rgba(22,22,22,.7);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+}
+.grid{
+  padding:20px;
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:16px;
+}
+.card{
+  border-radius:14px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+  cursor:pointer;
+}
+.thumb{
+  aspect-ratio:16/9;
+  background:#000;
+}
+.meta{padding:10px}
+
+/* ===== LIVE ===== */
+.live-page{padding:20px}
+.video{
+  position:relative;
+  width:100%;
+  max-width:1100px;
+  margin:0 auto 20px;
+  aspect-ratio:16/9;
+  background:#000;
+  border-radius:16px;
+  overflow:hidden;
+  border:1px solid var(--border);
+}
+.video video{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  background:#000;
+}
+
+/* ===== MODAL ===== */
+.modal-bg{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.6);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+.modal{
+  width:320px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:24px;
+}
 </style>
 </head>
 
@@ -21,20 +116,44 @@ button{background:#111;border:1px solid #333;color:#fff;padding:8px 14px;border-
 
 <header>
   <strong>K1T0 Live</strong>
-  <button id="loginBtn">Google Login</button>
-  <button id="createBtn" style="display:none">＋ Live作成</button>
+  <div>
+    <button id="loginBtn" class="accent">Google ログイン</button>
+    <button id="logoutBtn" style="display:none">ログアウト</button>
+    <button id="createBtn" style="display:none" onclick="openCreate()">＋ Live作成</button>
+  </div>
 </header>
 
 <div id="app"></div>
 
+<!-- CREATE -->
+<div class="modal-bg" id="createModal">
+  <div class="modal">
+    <strong>ライブ作成</strong>
+    <input id="newTitle" placeholder="タイトル">
+    <button class="accent" onclick="createLive()">作成</button>
+    <button onclick="closeCreate()">キャンセル</button>
+  </div>
+</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, doc,
-  setDoc, getDoc, onSnapshot
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+/* ===== Firebase ===== */
 const firebaseConfig = {
   apiKey: "AIzaSyC0dDWCq0fawXBsk0IJTruqbKKM_-Cwqsw",
   authDomain: "k1t0-live-video-153cb.firebaseapp.com",
@@ -46,145 +165,122 @@ const auth = getAuth(appFB);
 const db = getFirestore(appFB);
 const provider = new GoogleAuthProvider();
 
-const ADMIN_EMAILS = [
-  "kito.0420jp@gmail.com",
-  "masato.0420jp@gmail.com"
-];
+/* ===== STATE ===== */
+let user = null;
+let streams = [];
+let localStream = null;
+let micEnabled = true;
 
-let user,isAdmin=false,streams=[];
-let pc,localStream;
+/* ===== AUTH ===== */
+loginBtn.onclick = () => signInWithPopup(auth, provider);
+logoutBtn.onclick = () => signOut(auth);
 
-loginBtn.onclick = async()=> await signInWithPopup(auth, provider);
-
-onAuthStateChanged(auth, async(u)=>{
-  if(!u) return;
-  user=u;
-  isAdmin = ADMIN_EMAILS.includes(u.email);
-  loginBtn.style.display="none";
-  if(isAdmin) createBtn.style.display="inline-block";
+onAuthStateChanged(auth, u=>{
+  user = u;
+  loginBtn.style.display = u ? "none":"inline-block";
+  logoutBtn.style.display = u ? "inline-block":"none";
+  createBtn.style.display = u ? "inline-block":"none";
   render();
 });
 
-createBtn.onclick = async()=>{
+/* ===== CREATE ===== */
+window.openCreate = ()=>createModal.style.display="flex";
+window.closeCreate = ()=>createModal.style.display="none";
+
+window.createLive = async ()=>{
+  if(!user || !newTitle.value) return;
   const ref = await addDoc(collection(db,"streams"),{
+    title:newTitle.value,
     owner:user.uid,
     createdAt:Date.now()
   });
-  location.hash = "live="+ref.id;
+  newTitle.value="";
+  closeCreate();
+  location.hash="live="+ref.id;
 };
 
-onSnapshot(collection(db,"streams"), snap=>{
-  streams = snap.docs.map(d=>({id:d.id,...d.data()}));
-  render();
-});
-
-function createPC(streamId,isBroadcaster){
-  pc = new RTCPeerConnection({
-    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+/* ===== MEDIA ===== */
+async function startScreen(){
+  localStream = await navigator.mediaDevices.getDisplayMedia({
+    video:true,
+    audio:true
   });
+  showStream(localStream);
+}
 
-  const iceRef = collection(db,"streams",streamId,"ice");
-
-  pc.onicecandidate = e=>{
-    if(e.candidate){
-      addDoc(iceRef,{
-        candidate:e.candidate.toJSON(),
-        from:isBroadcaster?"host":"viewer"
-      });
-    }
-  };
-
-  if(!isBroadcaster){
-    pc.ontrack = e=>{
-      const v=document.createElement("video");
-      v.autoplay=true;
-      v.srcObject=e.streams[0];
-      document.querySelector(".video").appendChild(v);
-    };
+async function toggleMic(){
+  if(!localStream){
+    localStream = await navigator.mediaDevices.getUserMedia({audio:true});
   }
-
-  onSnapshot(iceRef,snap=>{
-    snap.docChanges().forEach(c=>{
-      const d=c.doc.data();
-      if(d.from!== (isBroadcaster?"host":"viewer")){
-        pc.addIceCandidate(new RTCIceCandidate(d.candidate));
-      }
-    });
-  });
+  micEnabled = !micEnabled;
+  localStream.getAudioTracks().forEach(t=>t.enabled = micEnabled);
+  alert("マイク " + (micEnabled ? "ON":"OFF"));
 }
 
-async function startBroadcast(streamId){
-  localStream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  createPC(streamId,true);
-  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+function showStream(stream){
+  const container = document.querySelector(".video");
+  container.innerHTML = "";
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = stream;
 
-  await setDoc(doc(db,"streams",streamId),{
-    offer
-  },{merge:true});
-
-  onSnapshot(doc(db,"streams",streamId),snap=>{
-    const d=snap.data();
-    if(d.answer && !pc.currentRemoteDescription){
-      pc.setRemoteDescription(new RTCSessionDescription(d.answer));
-    }
-  });
-
-  const v=document.createElement("video");
-  v.autoplay=true;
-  v.muted=true;
-  v.srcObject=localStream;
-  document.querySelector(".video").appendChild(v);
+  container.appendChild(video);
 }
 
-async function startViewer(streamId){
-  createPC(streamId,false);
-  const ref=doc(db,"streams",streamId);
+/* ===== DELETE ===== */
+window.endLive = async(id)=>{
+  await deleteDoc(doc(db,"streams",id));
+  location.hash="";
+};
 
-  onSnapshot(ref, async snap=>{
-    const d=snap.data();
-    if(d.offer && !pc.currentRemoteDescription){
-      await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
-      const answer=await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await setDoc(ref,{answer},{merge:true});
-    }
-  });
-}
-
+/* ===== RENDER ===== */
 function render(){
-  const app=document.getElementById("app");
+  const app = document.getElementById("app");
 
   if(location.hash.startsWith("#live=")){
-    const id=location.hash.split("=")[1];
-    app.innerHTML=`
-      <div style="padding:20px">
+    const id = location.hash.split("=")[1];
+    const s = streams.find(v=>v.id===id);
+    if(!s){ location.hash=""; return; }
+
+    app.innerHTML = `
+      <div class="live-page">
         <div class="video"></div>
-        ${isAdmin?
-          `<button onclick="startBroadcast('${id}')">配信開始</button>`
-          :
-          `<small>視聴中…</small>`
-        }
+        <strong>${s.title}</strong><br><br>
+
+        ${user && user.uid===s.owner ? `
+          <button onclick="startScreen()">🖥 画面共有</button>
+          <button onclick="toggleMic()">🎤 マイクON/OFF</button>
+          <button onclick="endLive('${id}')">終了</button>
+        `:""}
       </div>
     `;
-    if(!isAdmin) startViewer(id);
     return;
   }
 
-  app.innerHTML=`
+  app.innerHTML = `
     <div class="grid">
       ${streams.map(s=>`
         <div class="card" onclick="location.hash='live=${s.id}'">
-          Live ${s.id}
+          <div class="thumb"></div>
+          <div class="meta">
+            <strong>${s.title}</strong>
+          </div>
         </div>
       `).join("")}
     </div>
   `;
 }
 
-window.startBroadcast=startBroadcast;
+/* ===== FIRESTORE ===== */
+onSnapshot(collection(db,"streams"), snap=>{
+  streams = snap.docs.map(d=>({id:d.id,...d.data()}));
+  render();
+});
+
+window.addEventListener("hashchange", render);
 </script>
 
 </body>
