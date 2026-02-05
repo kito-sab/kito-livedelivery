@@ -54,24 +54,56 @@ button.accent{
   border:1px solid var(--border);
   background:#111;
   cursor:pointer;
-  transition:.2s;
 }
-.card:hover{transform:translateY(-3px)}
-.thumb{
-  aspect-ratio:16/9;
-  background:#000;
-}
+.thumb{aspect-ratio:16/9;background:#000}
 .meta{padding:12px}
-.live-page{padding:20px}
+
+.live-wrap{
+  display:flex;
+  gap:16px;
+}
+.live-main{
+  flex:1;
+}
 video{
   width:100%;
   aspect-ratio:16/9;
   background:#000;
   border-radius:16px;
   border:1px solid var(--border);
-  margin-bottom:16px;
+  margin-bottom:12px;
 }
-.controls button{margin-right:8px}
+
+/* ===== CHAT ===== */
+.chat{
+  width:300px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:16px;
+  display:flex;
+  flex-direction:column;
+}
+.chat-messages{
+  flex:1;
+  padding:12px;
+  overflow-y:auto;
+  font-size:13px;
+}
+.chat-messages div{
+  margin-bottom:6px;
+}
+.chat-input{
+  border-top:1px solid var(--border);
+  display:flex;
+}
+.chat-input input{
+  flex:1;
+  padding:10px;
+  background:#111;
+  border:none;
+  color:#fff;
+  outline:none;
+}
 </style>
 </head>
 
@@ -90,7 +122,9 @@ video{
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+  getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDoc
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 /* Firebase */
 const firebaseConfig = {
@@ -108,114 +142,108 @@ const app = document.getElementById("app");
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 
-let user = null;
-let streams = [];
-let pc;
-let localStream;
+let user=null, streams=[], pc, localStream;
 
-/* ===== AUTH ===== */
-loginBtn.onclick = () => signInWithPopup(auth, provider);
-logoutBtn.onclick = () => signOut(auth);
-
-onAuthStateChanged(auth, u=>{
-  user = u;
-  loginBtn.style.display = u ? "none":"inline-block";
-  logoutBtn.style.display = u ? "inline-block":"none";
+/* AUTH */
+loginBtn.onclick=()=>signInWithPopup(auth,provider);
+logoutBtn.onclick=()=>signOut(auth);
+onAuthStateChanged(auth,u=>{
+  user=u;
+  loginBtn.style.display=u?"none":"inline-block";
+  logoutBtn.style.display=u?"inline-block":"none";
   render();
 });
 
-/* ===== CREATE LIVE ===== */
-window.createLive = async function(){
-  if(!user) return alert("ログインしてください");
-
-  const title = prompt("ライブタイトル");
+/* CREATE */
+window.createLive=async()=>{
+  if(!user) return;
+  const title=prompt("ライブタイトル");
   if(!title) return;
-
-  const ref = await addDoc(collection(db,"streams"),{
-    title,
-    owner:user.uid,
-    createdAt:Date.now()
+  const ref=await addDoc(collection(db,"streams"),{
+    title, owner:user.uid, createdAt:Date.now()
   });
-
-  location.hash = "live=" + ref.id;
+  location.hash="live="+ref.id;
 };
 
-/* ===== WebRTC 配信 ===== */
-window.startBroadcast = async function(id){
-  pc = new RTCPeerConnection();
-  localStream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  document.getElementById("video").srcObject = localStream;
+/* WebRTC */
+async function startBroadcast(id){
+  pc=new RTCPeerConnection();
+  localStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+  video.srcObject=localStream;
   localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-
-  const offer = await pc.createOffer();
+  const offer=await pc.createOffer();
   await pc.setLocalDescription(offer);
   await setDoc(doc(db,"signals",id),{offer});
-};
+}
 
-/* ===== WebRTC 視聴 ===== */
-window.watch = async function(id){
-  pc = new RTCPeerConnection();
-  pc.ontrack = e=>document.getElementById("video").srcObject=e.streams[0];
-
-  const snap = await getDoc(doc(db,"signals",id));
-  if(!snap.exists()) return alert("配信未開始");
-
+async function watch(id){
+  pc=new RTCPeerConnection();
+  pc.ontrack=e=>video.srcObject=e.streams[0];
+  const snap=await getDoc(doc(db,"signals",id));
+  if(!snap.exists()) return;
   await pc.setRemoteDescription(snap.data().offer);
-  const answer = await pc.createAnswer();
+  const answer=await pc.createAnswer();
   await pc.setLocalDescription(answer);
   await setDoc(doc(db,"signals",id),{...snap.data(),answer});
-};
+}
 
-/* ===== RENDER ===== */
+/* RENDER */
 function render(){
   if(location.hash.startsWith("#live=")){
-    const id = location.hash.split("=")[1];
-    const s = streams.find(v=>v.id===id);
+    const id=location.hash.split("=")[1];
+    const s=streams.find(v=>v.id===id);
     if(!s){location.hash="";return;}
 
     app.innerHTML=`
-      <div class="live-page">
-        <video id="video" autoplay playsinline></video>
-        <strong>${s.title}</strong><br><br>
-        <div class="controls">
+      <div class="live-wrap">
+        <div class="live-main">
+          <video id="video" autoplay playsinline></video>
+          <strong>${s.title}</strong><br><br>
           ${user && user.uid===s.owner
-            ? `<button id="startBtn">🎥 配信開始</button>
-               <button id="micBtn">🎤 マイク切替</button>`
-            : `<button id="watchBtn">▶ 視聴する</button>`
+            ? `<button onclick="startBroadcast('${id}')">🎥 配信開始</button>
+               <button onclick="localStream?.getAudioTracks()[0].enabled^=1">🎤 マイク</button>`
+            : ``
           }
         </div>
-      </div>`;
 
-    if(user && user.uid===s.owner){
-      document.getElementById("startBtn").onclick=()=>startBroadcast(id);
-      document.getElementById("micBtn").onclick=()=>{
-        const t = localStream?.getAudioTracks()[0];
-        if(t) t.enabled=!t.enabled;
-      };
-    }else{
-      document.getElementById("watchBtn").onclick=()=>watch(id);
-    }
+        <div class="chat">
+          <div class="chat-messages" id="msgs"></div>
+          <div class="chat-input">
+            <input id="chatInput" placeholder="コメントを書く">
+          </div>
+        </div>
+      </div>
+    `;
+
+    if(!user || user.uid!==s.owner) watch(id);
+
+    const msgs=collection(db,"streams",id,"chat");
+    onSnapshot(msgs,snap=>{
+      msgsEl.innerHTML=snap.docs.map(d=>`<div>${d.data().text}</div>`).join("");
+    });
+
+    chatInput.onkeydown=e=>{
+      if(e.key==="Enter"&&chatInput.value){
+        addDoc(msgs,{text:chatInput.value,ts:Date.now()});
+        chatInput.value="";
+      }
+    };
     return;
   }
 
   app.innerHTML=`
     <div class="grid">
       ${user?`
-      <div class="card" id="createCard">
+      <div class="card" onclick="createLive()">
         <div class="thumb"></div>
         <div class="meta"><strong>＋ Live作成</strong></div>
       </div>`:""}
       ${streams.map(s=>`
-        <div class="card" data-id="${s.id}">
+        <div class="card" onclick="location.hash='live=${s.id}'">
           <div class="thumb"></div>
           <div class="meta"><strong>${s.title}</strong></div>
         </div>`).join("")}
     </div>`;
-
-  document.getElementById("createCard")?.addEventListener("click",createLive);
-  document.querySelectorAll(".card[data-id]").forEach(c=>{
-    c.onclick=()=>location.hash="live="+c.dataset.id;
-  });
 }
 
 onSnapshot(collection(db,"streams"),snap=>{
