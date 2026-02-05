@@ -13,6 +13,7 @@
   --panel:#161616;
   --border:rgba(255,255,255,.08);
   --accent:#00e5ff;
+  --sub:#aaa;
 }
 *{box-sizing:border-box}
 body{
@@ -27,7 +28,7 @@ header{
   align-items:center;
   justify-content:space-between;
   padding:0 16px;
-  background:#111;
+  background:rgba(22,22,22,.7);
   border-bottom:1px solid var(--border);
 }
 button{
@@ -49,19 +50,79 @@ button.accent{
   gap:16px;
 }
 .card{
-  border:1px solid var(--border);
   border-radius:14px;
-  padding:12px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:#111;
   cursor:pointer;
+  transition:.2s;
 }
-.live-page{
+.card:hover{transform:translateY(-3px)}
+.thumb{aspect-ratio:16/9;background:#000}
+.meta{padding:12px}
+
+/* ===== LIVE ===== */
+.live-layout{
+  display:flex;
+  height:calc(100vh - 56px);
+}
+.live-main{
+  flex:1;
   padding:20px;
 }
 video{
   width:100%;
-  border-radius:16px;
+  aspect-ratio:16/9;
   background:#000;
-  margin-bottom:16px;
+  border-radius:16px;
+  border:1px solid var(--border);
+  margin-bottom:12px;
+}
+.controls button{margin-right:8px}
+
+/* ===== CHAT ===== */
+.chat-panel{
+  width:320px;
+  background:#111;
+  border-left:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  transition:.3s;
+}
+.chat-panel.closed{
+  transform:translateX(100%);
+}
+.chat-header{
+  height:48px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:0 10px;
+  border-bottom:1px solid var(--border);
+}
+.chat-header button{
+  width:32px;height:32px;border-radius:50%;
+}
+#messages{
+  flex:1;
+  overflow-y:auto;
+  padding:10px;
+}
+.msg{font-size:14px;margin-bottom:6px}
+.msg span{color:var(--sub)}
+.chat-input{
+  display:flex;
+  gap:8px;
+  padding:10px;
+  border-top:1px solid var(--border);
+}
+.chat-input input{
+  flex:1;
+  padding:8px 12px;
+  border-radius:999px;
+  background:#000;
+  border:1px solid var(--border);
+  color:#fff;
 }
 </style>
 </head>
@@ -73,7 +134,6 @@ video{
   <div>
     <button id="loginBtn" class="accent">Googleログイン</button>
     <button id="logoutBtn" style="display:none">ログアウト</button>
-    <button id="createBtn" style="display:none">＋ Live作成</button>
   </div>
 </header>
 
@@ -81,25 +141,10 @@ video{
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import {
-  getFirestore,
-  collection,
-  addDoc,
-  doc,
-  deleteDoc,
-  onSnapshot,
-  setDoc,
-  getDoc
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-/* 🔥 Firebase */
+/* Firebase */
 const firebaseConfig = {
   apiKey: "AIzaSyC0dDWCq0fawXBsk0IJTruqbKKM_-Cwqsw",
   authDomain: "k1t0-live-video-153cb.firebaseapp.com",
@@ -111,154 +156,137 @@ const auth = getAuth(appFB);
 const db = getFirestore(appFB);
 const provider = new GoogleAuthProvider();
 
-/* ===== 管理者 ===== */
-const ADMINS = [
-  "kito.0420jp@gmail.com",
-  "masato.0420jp@gmail.com"
-];
+let user=null;
+let streams=[];
+let pc;
+let localStream;
+let currentLiveId=null;
 
-let user = null;
-let streams = [];
-let pc = null;
-let localStream = null;
+/* AUTH */
+loginBtn.onclick=()=>signInWithPopup(auth,provider);
+logoutBtn.onclick=()=>signOut(auth);
 
-/* ===== AUTH ===== */
-loginBtn.onclick = () => signInWithPopup(auth, provider);
-logoutBtn.onclick = () => signOut(auth);
-
-onAuthStateChanged(auth, u=>{
-  user = u;
-  loginBtn.style.display = u ? "none":"inline-block";
-  logoutBtn.style.display = u ? "inline-block":"none";
-  createBtn.style.display = u && ADMINS.includes(u.email) ? "inline-block":"none";
+onAuthStateChanged(auth,u=>{
+  user=u;
+  loginBtn.style.display=u?"none":"inline-block";
+  logoutBtn.style.display=u?"inline-block":"none";
   render();
 });
 
-/* ===== LIVE 作成 ===== */
-createBtn.onclick = async ()=>{
-  const title = prompt("ライブタイトル");
-  if(!title) return;
-  const ref = await addDoc(collection(db,"streams"),{
-    title,
-    owner:user.uid,
-    createdAt:Date.now()
+/* CREATE LIVE */
+async function createLive(){
+  const title=prompt("ライブタイトル");
+  if(!title||!user)return;
+  const ref=await addDoc(collection(db,"streams"),{
+    title,owner:user.uid,createdAt:Date.now()
   });
-  location.hash = "live="+ref.id;
+  location.hash="live="+ref.id;
+}
+
+/* WEBRTC */
+window.startBroadcast=async(id)=>{
+  pc=new RTCPeerConnection();
+  localStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
+  video.srcObject=localStream;
+  localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+  const offer=await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await setDoc(doc(db,"signals",id),{offer});
 };
 
-/* ===== WebRTC 配信 ===== */
-async function startBroadcast(id){
-  localStream = await navigator.mediaDevices.getDisplayMedia({
-    video:true,
-    audio:true
-  });
-
-  const video = document.getElementById("video");
-  video.srcObject = localStream;
-
-  pc = new RTCPeerConnection({
-    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
-  });
-
-  localStream.getTracks().forEach(track=>{
-    pc.addTrack(track, localStream);
-  });
-
-  pc.onicecandidate = e=>{
-    if(e.candidate){
-      setDoc(doc(db,"signals",id+"_ice"),{
-        candidate:e.candidate
-      });
-    }
-  };
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-
-  await setDoc(doc(db,"signals",id),{
-    offer:{type:offer.type,sdp:offer.sdp}
-  });
-
-  onSnapshot(doc(db,"signals",id+"_answer"),snap=>{
-    if(snap.exists()){
-      pc.setRemoteDescription(snap.data().answer);
-    }
-  });
-}
-
-/* ===== 視聴 ===== */
-async function watch(id){
-  const video = document.getElementById("video");
-  pc = new RTCPeerConnection({
-    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
-  });
-
-  pc.ontrack = e=>{
-    video.srcObject = e.streams[0];
-  };
-
-  pc.onicecandidate = e=>{
-    if(e.candidate){
-      setDoc(doc(db,"signals",id+"_answer_ice"),{
-        candidate:e.candidate
-      });
-    }
-  };
-
-  const offerSnap = await getDoc(doc(db,"signals",id));
-  if(!offerSnap.exists()) return;
-
-  await pc.setRemoteDescription(offerSnap.data().offer);
-  const answer = await pc.createAnswer();
+window.watch=async(id)=>{
+  pc=new RTCPeerConnection();
+  pc.ontrack=e=>video.srcObject=e.streams[0];
+  const snap=await getDoc(doc(db,"signals",id));
+  if(!snap.exists())return;
+  const {offer}=snap.data();
+  await pc.setRemoteDescription(offer);
+  const answer=await pc.createAnswer();
   await pc.setLocalDescription(answer);
+  await setDoc(doc(db,"signals",id),{offer,answer});
+};
 
-  await setDoc(doc(db,"signals",id+"_answer"),{
-    answer:{type:answer.type,sdp:answer.sdp}
+/* CHAT */
+function listenChat(id){
+  onSnapshot(collection(db,"streams",id,"chat"),snap=>{
+    messages.innerHTML=snap.docs.map(d=>{
+      const m=d.data();
+      return `<div class="msg"><span>${m.name}</span>: ${m.text}</div>`;
+    }).join("");
   });
 }
+window.sendMessage=async()=>{
+  if(!user||!chatText.value)return;
+  await addDoc(collection(db,"streams",currentLiveId,"chat"),{
+    text:chatText.value,
+    name:user.displayName,
+    createdAt:serverTimestamp()
+  });
+  chatText.value="";
+};
 
-/* ===== RENDER ===== */
+/* RENDER */
 function render(){
-  const app = document.getElementById("app");
-
   if(location.hash.startsWith("#live=")){
-    const id = location.hash.split("=")[1];
-    const s = streams.find(v=>v.id===id);
+    const id=location.hash.split("=")[1];
+    const s=streams.find(v=>v.id===id);
     if(!s){location.hash="";return;}
+    currentLiveId=id;
 
-    const isOwner = user && user.uid===s.owner;
+    app.innerHTML=`
+      <div class="live-layout">
+        <div class="live-main">
+          <video id="video" autoplay playsinline></video>
+          <strong>${s.title}</strong><br><br>
+          <div class="controls">
+            ${user&&user.uid===s.owner
+              ? `<button onclick="startBroadcast('${id}')">🎥 配信開始</button>
+                 <button onclick="localStream && (localStream.getAudioTracks()[0].enabled=!localStream.getAudioTracks()[0].enabled)">🎤 マイク</button>`
+              : `<button onclick="watch('${id}')">▶ 視聴</button>`
+            }
+          </div>
+        </div>
 
-    app.innerHTML = `
-      <div class="live-page">
-        <video id="video" autoplay playsinline muted></video>
-        <strong>${s.title}</strong><br><br>
-        ${isOwner?`
-          <button class="accent" onclick="startBroadcast('${id}')">📡 配信開始</button>
-        `:`
-          <button class="accent" onclick="watch('${id}')">▶ 視聴</button>
-        `}
-      </div>
-    `;
+        <div id="chatPanel" class="chat-panel">
+          <div class="chat-header">
+            <button id="toggleChat">▶</button>
+            <strong>チャット</strong>
+          </div>
+          <div id="messages"></div>
+          <div class="chat-input">
+            <input id="chatText" placeholder="メッセージ">
+            <button onclick="sendMessage()">送信</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById("toggleChat").onclick=()=>{
+      chatPanel.classList.toggle("closed");
+      toggleChat.textContent=chatPanel.classList.contains("closed")?"◀":"▶";
+    };
+
+    listenChat(id);
     return;
   }
 
-  app.innerHTML = `
+  app.innerHTML=`
     <div class="grid">
+      ${user?`<div class="card" onclick="createLive()">
+        <div class="thumb"></div>
+        <div class="meta"><strong>＋ Live作成</strong></div>
+      </div>`:""}
       ${streams.map(s=>`
         <div class="card" onclick="location.hash='live=${s.id}'">
-          <strong>${s.title}</strong>
-        </div>
-      `).join("")}
-    </div>
-  `;
+          <div class="thumb"></div>
+          <div class="meta"><strong>${s.title}</strong></div>
+        </div>`).join("")}
+    </div>`;
 }
 
-/* ===== Firestore ===== */
 onSnapshot(collection(db,"streams"),snap=>{
-  streams = snap.docs.map(d=>({id:d.id,...d.data()}));
+  streams=snap.docs.map(d=>({id:d.id,...d.data()}));
   render();
 });
-
 window.addEventListener("hashchange",render);
 </script>
 
