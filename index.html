@@ -13,8 +13,6 @@
   --panel:#161616;
   --border:rgba(255,255,255,.08);
   --accent:#00e5ff;
-  --live:#ff2a2a;
-  --sub:#aaa;
 }
 *{box-sizing:border-box}
 body{
@@ -22,6 +20,15 @@ body{
   font-family:Inter,system-ui;
   background:var(--bg);
   color:#fff;
+}
+header{
+  height:56px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  background:#111;
+  border-bottom:1px solid var(--border);
 }
 button{
   background:transparent;
@@ -35,25 +42,6 @@ button.accent{
   border-color:var(--accent);
   box-shadow:0 0 12px rgba(0,229,255,.4);
 }
-input{
-  width:100%;
-  padding:10px 14px;
-  border-radius:10px;
-  background:#0f0f0f;
-  border:1px solid var(--border);
-  color:#fff;
-  margin-bottom:18px;
-}
-header{
-  height:56px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:0 16px;
-  background:rgba(22,22,22,.7);
-  backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--border);
-}
 .grid{
   padding:20px;
   display:grid;
@@ -61,53 +49,19 @@ header{
   gap:16px;
 }
 .card{
-  border-radius:14px;
-  overflow:hidden;
   border:1px solid var(--border);
-  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+  border-radius:14px;
+  padding:12px;
   cursor:pointer;
 }
-.thumb{
-  aspect-ratio:16/9;
-  background:#000;
+.live-page{
+  padding:20px;
 }
-.meta{padding:10px}
-
-/* ===== LIVE ===== */
-.live-page{padding:20px}
-.video{
-  position:relative;
+video{
   width:100%;
-  max-width:1100px;
-  margin:0 auto 20px;
-  aspect-ratio:16/9;
-  background:#000;
   border-radius:16px;
-  overflow:hidden;
-  border:1px solid var(--border);
-}
-.video video{
-  width:100%;
-  height:100%;
-  object-fit:contain;
   background:#000;
-}
-
-/* ===== MODAL ===== */
-.modal-bg{
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.6);
-  display:none;
-  align-items:center;
-  justify-content:center;
-}
-.modal{
-  width:320px;
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:16px;
-  padding:24px;
+  margin-bottom:16px;
 }
 </style>
 </head>
@@ -117,23 +71,13 @@ header{
 <header>
   <strong>K1T0 Live</strong>
   <div>
-    <button id="loginBtn" class="accent">Google ログイン</button>
+    <button id="loginBtn" class="accent">Googleログイン</button>
     <button id="logoutBtn" style="display:none">ログアウト</button>
-    <button id="createBtn" style="display:none" onclick="openCreate()">＋ Live作成</button>
+    <button id="createBtn" style="display:none">＋ Live作成</button>
   </div>
 </header>
 
 <div id="app"></div>
-
-<!-- CREATE -->
-<div class="modal-bg" id="createModal">
-  <div class="modal">
-    <strong>ライブ作成</strong>
-    <input id="newTitle" placeholder="タイトル">
-    <button class="accent" onclick="createLive()">作成</button>
-    <button onclick="closeCreate()">キャンセル</button>
-  </div>
-</div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
@@ -148,12 +92,14 @@ import {
   getFirestore,
   collection,
   addDoc,
-  onSnapshot,
   doc,
-  deleteDoc
+  deleteDoc,
+  onSnapshot,
+  setDoc,
+  getDoc
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-/* ===== Firebase ===== */
+/* 🔥 Firebase */
 const firebaseConfig = {
   apiKey: "AIzaSyC0dDWCq0fawXBsk0IJTruqbKKM_-Cwqsw",
   authDomain: "k1t0-live-video-153cb.firebaseapp.com",
@@ -165,11 +111,16 @@ const auth = getAuth(appFB);
 const db = getFirestore(appFB);
 const provider = new GoogleAuthProvider();
 
-/* ===== STATE ===== */
+/* ===== 管理者 ===== */
+const ADMINS = [
+  "kito.0420jp@gmail.com",
+  "masato.0420jp@gmail.com"
+];
+
 let user = null;
 let streams = [];
+let pc = null;
 let localStream = null;
-let micEnabled = true;
 
 /* ===== AUTH ===== */
 loginBtn.onclick = () => signInWithPopup(auth, provider);
@@ -179,62 +130,92 @@ onAuthStateChanged(auth, u=>{
   user = u;
   loginBtn.style.display = u ? "none":"inline-block";
   logoutBtn.style.display = u ? "inline-block":"none";
-  createBtn.style.display = u ? "inline-block":"none";
+  createBtn.style.display = u && ADMINS.includes(u.email) ? "inline-block":"none";
   render();
 });
 
-/* ===== CREATE ===== */
-window.openCreate = ()=>createModal.style.display="flex";
-window.closeCreate = ()=>createModal.style.display="none";
-
-window.createLive = async ()=>{
-  if(!user || !newTitle.value) return;
+/* ===== LIVE 作成 ===== */
+createBtn.onclick = async ()=>{
+  const title = prompt("ライブタイトル");
+  if(!title) return;
   const ref = await addDoc(collection(db,"streams"),{
-    title:newTitle.value,
+    title,
     owner:user.uid,
     createdAt:Date.now()
   });
-  newTitle.value="";
-  closeCreate();
-  location.hash="live="+ref.id;
+  location.hash = "live="+ref.id;
 };
 
-/* ===== MEDIA ===== */
-async function startScreen(){
+/* ===== WebRTC 配信 ===== */
+async function startBroadcast(id){
   localStream = await navigator.mediaDevices.getDisplayMedia({
     video:true,
     audio:true
   });
-  showStream(localStream);
+
+  const video = document.getElementById("video");
+  video.srcObject = localStream;
+
+  pc = new RTCPeerConnection({
+    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+  });
+
+  localStream.getTracks().forEach(track=>{
+    pc.addTrack(track, localStream);
+  });
+
+  pc.onicecandidate = e=>{
+    if(e.candidate){
+      setDoc(doc(db,"signals",id+"_ice"),{
+        candidate:e.candidate
+      });
+    }
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  await setDoc(doc(db,"signals",id),{
+    offer:{type:offer.type,sdp:offer.sdp}
+  });
+
+  onSnapshot(doc(db,"signals",id+"_answer"),snap=>{
+    if(snap.exists()){
+      pc.setRemoteDescription(snap.data().answer);
+    }
+  });
 }
 
-async function toggleMic(){
-  if(!localStream){
-    localStream = await navigator.mediaDevices.getUserMedia({audio:true});
-  }
-  micEnabled = !micEnabled;
-  localStream.getAudioTracks().forEach(t=>t.enabled = micEnabled);
-  alert("マイク " + (micEnabled ? "ON":"OFF"));
+/* ===== 視聴 ===== */
+async function watch(id){
+  const video = document.getElementById("video");
+  pc = new RTCPeerConnection({
+    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+  });
+
+  pc.ontrack = e=>{
+    video.srcObject = e.streams[0];
+  };
+
+  pc.onicecandidate = e=>{
+    if(e.candidate){
+      setDoc(doc(db,"signals",id+"_answer_ice"),{
+        candidate:e.candidate
+      });
+    }
+  };
+
+  const offerSnap = await getDoc(doc(db,"signals",id));
+  if(!offerSnap.exists()) return;
+
+  await pc.setRemoteDescription(offerSnap.data().offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  await setDoc(doc(db,"signals",id+"_answer"),{
+    answer:{type:answer.type,sdp:answer.sdp}
+  });
 }
-
-function showStream(stream){
-  const container = document.querySelector(".video");
-  container.innerHTML = "";
-
-  const video = document.createElement("video");
-  video.autoplay = true;
-  video.muted = true;
-  video.playsInline = true;
-  video.srcObject = stream;
-
-  container.appendChild(video);
-}
-
-/* ===== DELETE ===== */
-window.endLive = async(id)=>{
-  await deleteDoc(doc(db,"streams",id));
-  location.hash="";
-};
 
 /* ===== RENDER ===== */
 function render(){
@@ -243,18 +224,19 @@ function render(){
   if(location.hash.startsWith("#live=")){
     const id = location.hash.split("=")[1];
     const s = streams.find(v=>v.id===id);
-    if(!s){ location.hash=""; return; }
+    if(!s){location.hash="";return;}
+
+    const isOwner = user && user.uid===s.owner;
 
     app.innerHTML = `
       <div class="live-page">
-        <div class="video"></div>
+        <video id="video" autoplay playsinline muted></video>
         <strong>${s.title}</strong><br><br>
-
-        ${user && user.uid===s.owner ? `
-          <button onclick="startScreen()">🖥 画面共有</button>
-          <button onclick="toggleMic()">🎤 マイクON/OFF</button>
-          <button onclick="endLive('${id}')">終了</button>
-        `:""}
+        ${isOwner?`
+          <button class="accent" onclick="startBroadcast('${id}')">📡 配信開始</button>
+        `:`
+          <button class="accent" onclick="watch('${id}')">▶ 視聴</button>
+        `}
       </div>
     `;
     return;
@@ -264,23 +246,20 @@ function render(){
     <div class="grid">
       ${streams.map(s=>`
         <div class="card" onclick="location.hash='live=${s.id}'">
-          <div class="thumb"></div>
-          <div class="meta">
-            <strong>${s.title}</strong>
-          </div>
+          <strong>${s.title}</strong>
         </div>
       `).join("")}
     </div>
   `;
 }
 
-/* ===== FIRESTORE ===== */
-onSnapshot(collection(db,"streams"), snap=>{
+/* ===== Firestore ===== */
+onSnapshot(collection(db,"streams"),snap=>{
   streams = snap.docs.map(d=>({id:d.id,...d.data()}));
   render();
 });
 
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange",render);
 </script>
 
 </body>
