@@ -27,7 +27,7 @@ header{
   align-items:center;
   justify-content:space-between;
   padding:0 16px;
-  background:rgba(22,22,22,.7);
+  background:#111;
   border-bottom:1px solid var(--border);
 }
 button{
@@ -55,15 +55,13 @@ button.accent{
   background:#111;
   cursor:pointer;
 }
-.thumb{aspect-ratio:16/9;background:#000}
-.meta{padding:12px}
-
-.live-wrap{
-  display:flex;
-  gap:16px;
+.thumb{
+  aspect-ratio:16/9;
+  background:#000;
 }
-.live-main{
-  flex:1;
+.meta{padding:12px}
+.live{
+  padding:20px;
 }
 video{
   width:100%;
@@ -71,38 +69,7 @@ video{
   background:#000;
   border-radius:16px;
   border:1px solid var(--border);
-  margin-bottom:12px;
-}
-
-/* ===== CHAT ===== */
-.chat{
-  width:300px;
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:16px;
-  display:flex;
-  flex-direction:column;
-}
-.chat-messages{
-  flex:1;
-  padding:12px;
-  overflow-y:auto;
-  font-size:13px;
-}
-.chat-messages div{
-  margin-bottom:6px;
-}
-.chat-input{
-  border-top:1px solid var(--border);
-  display:flex;
-}
-.chat-input input{
-  flex:1;
-  padding:10px;
-  background:#111;
-  border:none;
-  color:#fff;
-  outline:none;
+  margin-bottom:16px;
 }
 </style>
 </head>
@@ -122,112 +89,143 @@ video{
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import {
-  getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDoc
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, onSnapshot, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-/* Firebase */
+/* ===== Firebase ===== */
 const firebaseConfig = {
   apiKey: "AIzaSyC0dDWCq0fawXBsk0IJTruqbKKM_-Cwqsw",
   authDomain: "k1t0-live-video-153cb.firebaseapp.com",
   projectId: "k1t0-live-video-153cb"
 };
 
-const appFB = initializeApp(firebaseConfig);
-const auth = getAuth(appFB);
-const db = getFirestore(appFB);
+const fb = initializeApp(firebaseConfig);
+const auth = getAuth(fb);
+const db = getFirestore(fb);
 const provider = new GoogleAuthProvider();
 
+/* ===== State ===== */
 const app = document.getElementById("app");
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 
-let user=null, streams=[], pc, localStream;
+let user = null;
+let streams = [];
+let pc;
+let localStream;
 
-/* AUTH */
-loginBtn.onclick=()=>signInWithPopup(auth,provider);
-logoutBtn.onclick=()=>signOut(auth);
+/* ===== WebRTC 設定（超重要） ===== */
+const rtcConfig = {
+  iceServers:[
+    { urls:"stun:stun.l.google.com:19302" }
+  ]
+};
+
+/* ===== Auth ===== */
+loginBtn.onclick = ()=>signInWithPopup(auth,provider);
+logoutBtn.onclick = ()=>signOut(auth);
+
 onAuthStateChanged(auth,u=>{
-  user=u;
-  loginBtn.style.display=u?"none":"inline-block";
-  logoutBtn.style.display=u?"inline-block":"none";
+  user = u;
+  loginBtn.style.display = u ? "none":"inline-block";
+  logoutBtn.style.display = u ? "inline-block":"none";
   render();
 });
 
-/* CREATE */
-window.createLive=async()=>{
+/* ===== Live作成 ===== */
+window.createLive = async ()=>{
   if(!user) return;
-  const title=prompt("ライブタイトル");
+  const title = prompt("ライブタイトル");
   if(!title) return;
-  const ref=await addDoc(collection(db,"streams"),{
-    title, owner:user.uid, createdAt:Date.now()
+
+  const ref = await addDoc(collection(db,"streams"),{
+    title,
+    owner:user.uid,
+    createdAt:Date.now()
   });
-  location.hash="live="+ref.id;
+  location.hash = "live="+ref.id;
 };
 
-/* WebRTC */
-async function startBroadcast(id){
-  pc=new RTCPeerConnection();
-  localStream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true});
-  video.srcObject=localStream;
+/* ===== 配信（画面共有） ===== */
+window.startBroadcast = async (id)=>{
+  pc = new RTCPeerConnection(rtcConfig);
+
+  localStream = await navigator.mediaDevices.getDisplayMedia({
+    video:true,
+    audio:true
+  });
+
+  document.getElementById("video").srcObject = localStream;
+
   localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-  const offer=await pc.createOffer();
+
+  pc.onicecandidate = e=>{
+    if(e.candidate){
+      setDoc(doc(db,"signals",id),{
+        offerCandidate:e.candidate
+      },{merge:true});
+    }
+  };
+
+  const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
+
   await setDoc(doc(db,"signals",id),{offer});
-}
+};
 
-async function watch(id){
-  pc=new RTCPeerConnection();
-  pc.ontrack=e=>video.srcObject=e.streams[0];
-  const snap=await getDoc(doc(db,"signals",id));
-  if(!snap.exists()) return;
-  await pc.setRemoteDescription(snap.data().offer);
-  const answer=await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  await setDoc(doc(db,"signals",id),{...snap.data(),answer});
-}
+/* ===== 視聴 ===== */
+window.watch = async (id)=>{
+  pc = new RTCPeerConnection(rtcConfig);
 
-/* RENDER */
+  pc.ontrack = e=>{
+    const v = document.getElementById("video");
+    v.srcObject = e.streams[0];
+    v.play();
+  };
+
+  pc.onicecandidate = e=>{
+    if(e.candidate){
+      setDoc(doc(db,"signals",id),{
+        answerCandidate:e.candidate
+      },{merge:true});
+    }
+  };
+
+  onSnapshot(doc(db,"signals",id), async snap=>{
+    const d = snap.data();
+    if(!d) return;
+
+    if(d.offer && !pc.currentRemoteDescription){
+      await pc.setRemoteDescription(d.offer);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      await setDoc(doc(db,"signals",id),{answer:ans},{merge:true});
+    }
+
+    if(d.offerCandidate){
+      try{await pc.addIceCandidate(d.offerCandidate);}catch{}
+    }
+    if(d.answerCandidate){
+      try{await pc.addIceCandidate(d.answerCandidate);}catch{}
+    }
+  });
+};
+
+/* ===== Render ===== */
 function render(){
   if(location.hash.startsWith("#live=")){
-    const id=location.hash.split("=")[1];
-    const s=streams.find(v=>v.id===id);
+    const id = location.hash.split("=")[1];
+    const s = streams.find(v=>v.id===id);
     if(!s){location.hash="";return;}
 
     app.innerHTML=`
-      <div class="live-wrap">
-        <div class="live-main">
-          <video id="video" autoplay playsinline></video>
-          <strong>${s.title}</strong><br><br>
-          ${user && user.uid===s.owner
-            ? `<button onclick="startBroadcast('${id}')">🎥 配信開始</button>
-               <button onclick="localStream?.getAudioTracks()[0].enabled^=1">🎤 マイク</button>`
-            : ``
-          }
-        </div>
-
-        <div class="chat">
-          <div class="chat-messages" id="msgs"></div>
-          <div class="chat-input">
-            <input id="chatInput" placeholder="コメントを書く">
-          </div>
-        </div>
-      </div>
-    `;
-
-    if(!user || user.uid!==s.owner) watch(id);
-
-    const msgs=collection(db,"streams",id,"chat");
-    onSnapshot(msgs,snap=>{
-      msgsEl.innerHTML=snap.docs.map(d=>`<div>${d.data().text}</div>`).join("");
-    });
-
-    chatInput.onkeydown=e=>{
-      if(e.key==="Enter"&&chatInput.value){
-        addDoc(msgs,{text:chatInput.value,ts:Date.now()});
-        chatInput.value="";
-      }
-    };
+      <div class="live">
+        <video id="video" autoplay playsinline muted></video>
+        <h3>${s.title}</h3>
+        ${user && user.uid===s.owner
+          ? `<button onclick="startBroadcast('${id}')">🎥 画面共有開始</button>`
+          : `<button onclick="watch('${id}')">▶ 視聴開始</button>`
+        }
+      </div>`;
     return;
   }
 
@@ -246,8 +244,9 @@ function render(){
     </div>`;
 }
 
+/* ===== Firestore ===== */
 onSnapshot(collection(db,"streams"),snap=>{
-  streams=snap.docs.map(d=>({id:d.id,...d.data()}));
+  streams = snap.docs.map(d=>({id:d.id,...d.data()}));
   render();
 });
 window.addEventListener("hashchange",render);
